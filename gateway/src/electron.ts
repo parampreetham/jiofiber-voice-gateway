@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, NativeImage, Notification } from "electron";
+import { app, BrowserWindow, Tray, Menu, nativeImage, NativeImage, Notification, session } from "electron";
 import path from "path";
 
 // Start the underlying JioVoiceGateway SIP & media engine
@@ -9,6 +9,18 @@ let tray: Tray | null = null;
 let isQuitting = false;
 
 function createWindow() {
+  // Auto-grant microphone and media permissions for local VoIP
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === "media") {
+      return callback(true);
+    }
+    callback(false);
+  });
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    if (permission === "media") return true;
+    return false;
+  });
+
   mainWindow = new BrowserWindow({
     width: 430,
     height: 740,
@@ -24,6 +36,11 @@ function createWindow() {
       webSecurity: true,
       allowRunningInsecureContent: false,
     },
+  });
+
+  // Stream console logs from the desktop window to terminal
+  mainWindow.webContents.on("console-message", (event, level, message, line, sourceId) => {
+    console.log(`[UI] ${message}`);
   });
 
   // Give local gateway 500ms to bind, then load

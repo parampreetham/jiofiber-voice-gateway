@@ -155,14 +155,68 @@
     let activeCodec = "PCMA";
     let activePayloadType = 8; // Default PCMA for Indian landlines
 
-    // Circular Jitter Playback Ring Buffer
-    const RING_SIZE = 16384; // ~2 seconds at 8kHz
-    const rxRing = new Float32Array(RING_SIZE);
-    let rxWritePtr = 0;
-    let rxReadPtr = 0;
-    let rxBufferedCount = 0;
-    let isPlaybackPrimed = false;
-    const PREBUFFER_SAMPLES = 480; // 60ms pre-buffer to absorb jitter
+    // Audio Jitter Resampler Queue
+    class AudioResampleQueue {
+      constructor(inputRate, outputRate) {
+        this.step = inputRate / outputRate;
+        this.queue = [];
+        this.totalSamples = 0;
+        this.readIndex = 0;
+        this.frac = 0;
+        this.started = false;
+      }
+
+      push(samples) {
+        this.queue.push(samples);
+        this.totalSamples += samples.length;
+        if (!this.started && this.totalSamples >= 320) {
+          this.started = true;
+        }
+        // Bound latency: if queue exceeds 250ms (2000 samples at 8kHz), drop oldest
+        if (this.totalSamples > 2000) {
+          while (this.totalSamples > 800 && this.queue.length > 1) {
+            this.totalSamples -= (this.queue[0].length - this.readIndex);
+            this.queue.shift();
+            this.readIndex = 0;
+          }
+        }
+      }
+
+      readNext() {
+        if (!this.started || this.queue.length === 0) return 0;
+
+        const chunk = this.queue[0];
+        const s0 = chunk[this.readIndex];
+        const s1 = (this.readIndex + 1 < chunk.length)
+          ? chunk[this.readIndex + 1]
+          : (this.queue.length > 1 ? this.queue[1][0] : s0);
+
+        const outSample = s0 + this.frac * (s1 - s0);
+
+        this.frac += this.step;
+        while (this.frac >= 1.0) {
+          this.frac -= 1.0;
+          this.readIndex++;
+          this.totalSamples--;
+          if (this.readIndex >= chunk.length) {
+            this.queue.shift();
+            this.readIndex = 0;
+            if (this.queue.length === 0) break;
+          }
+        }
+        return outSample;
+      }
+
+      clear() {
+        this.queue = [];
+        this.totalSamples = 0;
+        this.readIndex = 0;
+        this.frac = 0;
+        this.started = false;
+      }
+    }
+
+    let resampleQueue = null;
 
     // G.711 A-law (PT 8) Decode Lookup Table
     const ALAW_TABLE = new Int16Array(256);
@@ -220,40 +274,24 @@
         await audioCtx.resume();
       }
 
-      // Initialize continuous ring-buffer playback node
+      if (!resampleQueue) {
+        resampleQueue = new AudioResampleQueue(8000, audioCtx.sampleRate);
+      }
+
+      // Initialize continuous playback node
       if (!playerNode) {
         playerNode = audioCtx.createScriptProcessor(1024, 1, 1);
         playerNode.onaudioprocess = (e) => {
           const out = e.outputBuffer.getChannelData(0);
           const outLen = out.length;
-          const step = 8000 / audioCtx.sampleRate;
 
-          if (!isPlaybackPrimed || rxBufferedCount < 80) {
+          if (!resampleQueue) {
             out.fill(0);
             return;
           }
 
-          // Bound latency: if buffer grows over 200ms (1600 samples), drop excess
-          if (rxBufferedCount > 1600) {
-            const drop = rxBufferedCount - 800;
-            rxReadPtr = (rxReadPtr + drop) & (RING_SIZE - 1);
-            rxBufferedCount -= drop;
-          }
-
           for (let i = 0; i < outLen; i++) {
-            if (rxBufferedCount > 1) {
-              const idx0 = Math.floor(rxReadPtr) & (RING_SIZE - 1);
-              const idx1 = (idx0 + 1) & (RING_SIZE - 1);
-              const frac = rxReadPtr - Math.floor(rxReadPtr);
-              out[i] = rxRing[idx0] + frac * (rxRing[idx1] - rxRing[idx0]);
-
-              rxReadPtr += step;
-              if (rxReadPtr >= RING_SIZE) rxReadPtr -= RING_SIZE;
-              rxBufferedCount -= step;
-            } else {
-              out[i] = 0;
-              isPlaybackPrimed = false;
-            }
+            out[i] = resampleQueue.readNext();
           }
         };
 
@@ -262,7 +300,7 @@
         dummySource.connect(playerNode);
         playerNode.connect(audioCtx.destination);
         dummySource.start();
-        console.log("[Audio] Continuous playback ring-buffer active at", audioCtx.sampleRate, "Hz");
+        console.log("[Audio] Continuous playback queue active at", audioCtx.sampleRate, "Hz");
       }
 
       // Initialize microphone capture
@@ -287,7 +325,7 @@
 
           micNode.onaudioprocess = (e) => {
             const out = e.outputBuffer.getChannelData(0);
-            out.fill(0); // Mute mic loopback to speakers
+            out.fill(0);
 
             if (isMuted) return;
 
@@ -302,7 +340,7 @@
               resampleBuffer.push(encoded);
             }
 
-            // Send 160-sample (20ms) chunks
+            // Send in 160-sample (20ms) chunks
             while (resampleBuffer.length >= 160) {
               const chunk = new Uint8Array(resampleBuffer.splice(0, 160));
               if (ws && ws.readyState === WebSocket.OPEN) {
@@ -312,7 +350,13 @@
           };
 
           micSource.connect(micNode);
-          micNode.connect(audioCtx.destination);
+
+          // Route mic processor through zero gain to prevent ANY speaker acoustic feedback
+          const silenceGain = audioCtx.createGain();
+          silenceGain.gain.value = 0;
+          micNode.connect(silenceGain);
+          silenceGain.connect(audioCtx.destination);
+
           console.log("[Audio] Microphone stream capture active at 8000 Hz (" + activeCodec + ")");
         } catch (err) {
           console.warn("[Audio] Could not access microphone:", err.message);
@@ -338,15 +382,17 @@
         micNode.disconnect();
         micNode = null;
       }
-      rxBufferedCount = 0;
-      rxWritePtr = 0;
-      rxReadPtr = 0;
-      isPlaybackPrimed = false;
+      if (resampleQueue) {
+        resampleQueue.clear();
+      }
     }
 
     function playIncomingAudio(buffer) {
       if (!audioCtx || !playerNode) {
         initAudioEngine();
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
       }
 
       const uint8 = new Uint8Array(buffer);
@@ -354,7 +400,7 @@
 
       let pt = activePayloadType;
       let data = uint8;
-      // If packet has 1-byte PT prefix (161 bytes):
+      // If packet has 1-byte PT prefix (e.g. 161 bytes):
       if (uint8.length === 161) {
         pt = uint8[0];
         data = uint8.subarray(1);
@@ -362,15 +408,14 @@
 
       const table = (pt === 0) ? ULAW_TABLE : ALAW_TABLE;
       const len = data.length;
+      const pcmFloat = new Float32Array(len);
 
       for (let i = 0; i < len; i++) {
-        rxRing[rxWritePtr] = table[data[i]] / 32768.0;
-        rxWritePtr = (rxWritePtr + 1) & (RING_SIZE - 1);
+        pcmFloat[i] = table[data[i]] / 32768.0;
       }
-      rxBufferedCount += len;
 
-      if (!isPlaybackPrimed && rxBufferedCount >= PREBUFFER_SAMPLES) {
-        isPlaybackPrimed = true;
+      if (resampleQueue) {
+        resampleQueue.push(pcmFloat);
       }
     }
 
@@ -380,9 +425,19 @@
 
       ws.onopen = () => console.log("Connected to JioFiber Voice Gateway");
 
-      ws.onmessage = (event) => {
+      ws.onmessage = async (event) => {
         // Binary data = Incoming Audio payload from Jio IMS
+        let arrayBuffer = null;
         if (event.data instanceof ArrayBuffer) {
+          arrayBuffer = event.data;
+        } else if (event.data instanceof Blob) {
+          arrayBuffer = await event.data.arrayBuffer();
+        }
+
+        if (arrayBuffer) {
+          playIncomingAudio(arrayBuffer);
+          return;
+        }
           playIncomingAudio(event.data);
           return;
         }

@@ -151,7 +151,7 @@ export class RtpEngine extends EventEmitter {
     this.packetsReceived++;
     if (this.packetsReceived === 1 || this.packetsReceived % 100 === 0) {
       console.log(
-        `[RTP] 🔊 Received ${this.packetsReceived} audio packets from Jio IMS (PT=${payloadType}, ${payload.length} bytes)`
+        `[RTP] 🔊 Received ${this.packetsReceived} audio packets from Jio IMS (PT=${payloadType}, ${payload.length} bytes, hex: ${payload.subarray(0, 8).toString("hex")})`
       );
     }
 
