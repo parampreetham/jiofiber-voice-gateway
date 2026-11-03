@@ -19,6 +19,8 @@ export class RtpEngine extends EventEmitter {
   private timestamp = Math.floor(Math.random() * 0xffffffff);
   private ssrc = Math.floor(Math.random() * 0xffffffff);
   private isActive = false;
+  private packetsSent = 0;
+  private packetsReceived = 0;
 
   constructor(config?: RtpConfig) {
     super();
@@ -101,6 +103,10 @@ export class RtpEngine extends EventEmitter {
     // Advance counters
     this.seq = (this.seq + 1) & 0xffff;
     this.timestamp = (this.timestamp + payload.length) >>> 0;
+    this.packetsSent++;
+    if (this.packetsSent === 1 || this.packetsSent % 100 === 0) {
+      console.log(`[RTP] 🎙️ Sent ${this.packetsSent} audio packets to [${this.remoteIp}]:${this.remotePort}`);
+    }
 
     this.socket.send(packet, this.remotePort, this.remoteIp, (err) => {
       if (err) {
@@ -133,6 +139,10 @@ export class RtpEngine extends EventEmitter {
     if (payloadOffset >= msg.length) return;
 
     const payload = msg.subarray(payloadOffset);
+    this.packetsReceived++;
+    if (this.packetsReceived === 1 || this.packetsReceived % 100 === 0) {
+      console.log(`[RTP] 🔊 Received ${this.packetsReceived} audio packets from Jio IMS (${payload.length} bytes each)`);
+    }
 
     // Emit received audio payload
     this.emit("audio", {

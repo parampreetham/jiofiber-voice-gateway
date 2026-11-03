@@ -269,6 +269,9 @@
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         nextPlayTime = audioCtx.currentTime;
       }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
 
       const uint8 = new Uint8Array(buffer);
       if (uint8.length === 0) return;

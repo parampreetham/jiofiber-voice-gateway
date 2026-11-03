@@ -234,8 +234,11 @@ export class JioSipClient extends EventEmitter {
     const lines = msg.split("\r\n");
     const startLine = lines[0] || "";
 
+    const cseqMatch = msg.match(/CSeq:\s*\d+\s+([A-Z]+)/i);
+    const cseqMethod = cseqMatch ? cseqMatch[1].toUpperCase() : "";
+
     // 1. Check Registration responses
-    if (msg.includes("CSeq:") && msg.includes("REGISTER")) {
+    if (cseqMethod === "REGISTER") {
       if (startLine.includes("401 Unauthorized")) {
         console.log(`[SIP] Received 401 challenge for REGISTER.`);
         this.handleRegistrationChallenge(msg);
@@ -255,28 +258,15 @@ export class JioSipClient extends EventEmitter {
       return;
     }
 
-    // 2. Incoming INVITE (Incoming Landline Call)
-    if (startLine.startsWith("INVITE") || msg.startsWith("INVITE") || msg.includes("INVITE sip:")) {
+    // 2. Incoming Requests
+    if (startLine.startsWith("INVITE ") || startLine.startsWith("INVITE\t")) {
       console.log(`[SIP] 📞 INCOMING CALL INVITE RECEIVED!`);
       this.handleIncomingInvite(msg);
       return;
     }
 
-    // 3. Responses to CANCEL
-    if (msg.includes("CSeq:") && msg.includes("CANCEL")) {
-      console.log(`[SIP] Router responded to CANCEL: ${startLine}`);
-      return;
-    }
-
-    // 4. Outgoing Call Responses (INVITE responses)
-    if (msg.includes("CSeq:") && msg.includes("INVITE")) {
-      this.handleInviteResponse(startLine, msg);
-      return;
-    }
-
-    // 5. Inbound BYE (Remote hung up)
-    if (startLine.startsWith("BYE") || msg.startsWith("BYE") || msg.includes("BYE sip:")) {
-      console.log(`[SIP] BYE received from remote: ${startLine}`);
+    if (startLine.startsWith("BYE ") || startLine.startsWith("BYE\t")) {
+      console.log(`[SIP] Inbound BYE received: ${startLine}`);
       this.sendResponse("200 OK", msg);
       this.rtpEngine.stopSession();
       if (this.activeSession) {
@@ -287,9 +277,8 @@ export class JioSipClient extends EventEmitter {
       return;
     }
 
-    // 6. Inbound CANCEL
-    if (startLine.startsWith("CANCEL") || msg.startsWith("CANCEL") || msg.includes("CANCEL sip:")) {
-      console.log(`[SIP] CANCEL received from remote: ${startLine}`);
+    if (startLine.startsWith("CANCEL ") || startLine.startsWith("CANCEL\t")) {
+      console.log(`[SIP] Inbound CANCEL received: ${startLine}`);
       this.sendResponse("200 OK", msg);
       this.rtpEngine.stopSession();
       if (this.activeSession) {
@@ -300,12 +289,29 @@ export class JioSipClient extends EventEmitter {
       return;
     }
 
-    // 7. Inbound ACK
-    if (startLine.startsWith("ACK") || msg.startsWith("ACK") || msg.includes("ACK sip:")) {
+    if (startLine.startsWith("ACK ") || startLine.startsWith("ACK\t")) {
       if (this.activeSession && this.activeSession.state === "ringing") {
         this.activeSession.state = "active";
         this.emit("call_connected", this.activeSession);
       }
+      return;
+    }
+
+    // 3. Responses to CANCEL
+    if (cseqMethod === "CANCEL") {
+      console.log(`[SIP] Router responded to CANCEL: ${startLine}`);
+      return;
+    }
+
+    // 4. Responses to PRACK
+    if (cseqMethod === "PRACK") {
+      console.log(`[SIP] Router responded to PRACK: ${startLine}`);
+      return;
+    }
+
+    // 5. Outgoing Call Responses (INVITE responses)
+    if (cseqMethod === "INVITE") {
+      this.handleInviteResponse(startLine, msg);
       return;
     }
   }
