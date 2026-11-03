@@ -367,9 +367,15 @@ class JioVoiceGateway {
               type: "PlainText",
               text: this.activeCall
                 ? `You have an incoming landline call from ${this.activeCall.caller}. Say answer to pick up.`
-                : `JioFiber Voice is online and registered directly on your router. Your number is ${this.landlineNumber}. Who would you like to call?`,
+                : `JioFiber Voice is online. Who would you like to call?`,
             },
-            shouldEndSession: !this.activeCall,
+            reprompt: {
+              outputSpeech: {
+                type: "PlainText",
+                text: "Say call followed by the phone number you would like to dial.",
+              },
+            },
+            shouldEndSession: false,
           },
         });
       }
