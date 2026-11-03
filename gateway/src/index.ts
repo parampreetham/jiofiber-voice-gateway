@@ -424,6 +424,39 @@ class JioVoiceGateway {
         });
       }
 
+      if (intentName === "AMAZON.StopIntent" || intentName === "AMAZON.CancelIntent") {
+        return res.json({
+          version: "1.0",
+          response: {
+            outputSpeech: { type: "PlainText", text: "Goodbye." },
+            shouldEndSession: true,
+          },
+        });
+      }
+
+      if (intentName === "AMAZON.HelpIntent") {
+        return res.json({
+          version: "1.0",
+          response: {
+            outputSpeech: {
+              type: "PlainText",
+              text: "You can say call followed by a number to make a call, answer to pick up, or hang up to disconnect. What would you like to do?",
+            },
+            reprompt: {
+              outputSpeech: { type: "PlainText", text: "Who would you like to call?" },
+            },
+            shouldEndSession: false,
+          },
+        });
+      }
+
+      if (requestType === "SessionEndedRequest") {
+        return res.json({
+          version: "1.0",
+          response: {},
+        });
+      }
+
       res.json({
         version: "1.0",
         response: {
