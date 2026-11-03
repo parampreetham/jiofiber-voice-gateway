@@ -46,6 +46,39 @@ export function detectDefaultGateway(): string {
   return "192.168.29.1";
 }
 
+export function getPhysicalMacAddress(): string {
+  try {
+    const defaultHost = detectDefaultGateway();
+    const prefix = defaultHost.split(".").slice(0, 3).join(".");
+    const ifaces = os.networkInterfaces();
+
+    // 1. First priority: Interface on the same subnet as the router
+    for (const name of Object.keys(ifaces)) {
+      for (const iface of ifaces[name] || []) {
+        if (iface.family === "IPv4" && !iface.internal && iface.address.startsWith(prefix)) {
+          if (iface.mac && iface.mac !== "00:00:00:00:00:00") {
+            return iface.mac.toLowerCase();
+          }
+        }
+      }
+    }
+
+    // 2. Second priority: Physical Wi-Fi or Ethernet
+    for (const name of Object.keys(ifaces)) {
+      const lower = name.toLowerCase();
+      if (lower.includes("wi-fi") || lower.includes("wlan") || lower.includes("ethernet")) {
+        for (const iface of ifaces[name] || []) {
+          if (iface.family === "IPv4" && !iface.internal && iface.mac && iface.mac !== "00:00:00:00:00:00") {
+            return iface.mac.toLowerCase();
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  return "00:00:85:ea:2c:9f";
+}
+
 export interface JioConfig {
   host: string;
   port: number;

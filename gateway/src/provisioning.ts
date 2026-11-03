@@ -1,6 +1,6 @@
 import https from "https";
 import crypto from "crypto";
-import { JioConfig } from "./config";
+import { JioConfig, getPhysicalMacAddress } from "./config";
 
 export interface ProvisioningSession {
   routerIp: string;
@@ -12,7 +12,36 @@ export interface ProvisioningSession {
 export class JioProvisioningService {
   private agent = new https.Agent({ rejectUnauthorized: false });
 
-  public requestOtp(
+  private queryRouter(url: string): Promise<{
+    statusCode?: number;
+    cookie?: string;
+    maskedMobile?: string;
+    body: string;
+    error?: string;
+  }> {
+    return new Promise((resolve) => {
+      const req = https.get(url, { agent: this.agent, timeout: 8000 }, (res) => {
+        const rawCookies = res.headers["set-cookie"] || [];
+        const cookie = rawCookies.map((c) => c.split(";")[0]).join("; ");
+        const maskedMobile = (res.headers["x-amn"] as string) || "";
+        let body = "";
+        res.on("data", (chunk) => (body += chunk));
+        res.on("end", () => {
+          resolve({
+            statusCode: res.statusCode,
+            cookie,
+            maskedMobile,
+            body,
+          });
+        });
+      });
+      req.on("error", (err) => {
+        resolve({ body: "", error: err.message });
+      });
+    });
+  }
+
+  public async requestOtp(
     routerIp: string,
     customMac?: string,
     clientName = "JioFiberVoice"
@@ -23,75 +52,69 @@ export class JioProvisioningService {
     config?: JioConfig;
     message?: string;
   }> {
-    return new Promise((resolve) => {
-      // Use persistent paired MAC (00:00:85:ea:2c:9f) by default so already-whitelisted devices connect immediately
-      const mac = (customMac && customMac.trim()) || "00:00:85:ea:2c:9f";
-      const uuid = `00000000-0000-1000-8000-${mac.replace(/:/g, "").toUpperCase()}`;
+    const physicalMac = getPhysicalMacAddress();
+    // Try candidate MACs: first custom or paired MAC, then physical Wi-Fi MAC
+    const candidates = customMac
+      ? [customMac.trim()]
+      : ["00:00:85:ea:2c:9f", physicalMac].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
+    let lastError = "Router returned 403 Forbidden: JioFiber limit of 6 paired extensions reached or unauthorized MAC.";
+
+    for (const mac of candidates) {
+      const uuid = `00000000-0000-1000-8000-${mac.replace(/:/g, "").toUpperCase()}`;
       const url = `https://${routerIp}:8443/?terminal_sw_version=RCSAndrd&terminal_vendor=${clientName}&terminal_model=${clientName}&mac_address=${mac}&alias=${clientName}&nwk_intf=wifi&op_type=add`;
 
-      const req = https.get(url, { agent: this.agent, timeout: 8000 }, (res) => {
-        const rawCookies = res.headers["set-cookie"] || [];
-        const cookie = rawCookies.map((c) => c.split(";")[0]).join("; ");
-        const maskedMobile = (res.headers["x-amn"] as string) || "";
+      console.log(`[Provisioning] Trying router pairing at ${routerIp}:8443 with MAC ${mac}...`);
+      const res = await this.queryRouter(url);
 
-        let body = "";
-        res.on("data", (chunk) => (body += chunk));
-        res.on("end", () => {
-          console.log(`[Provisioning] Router response (status ${res.statusCode}, x-amn: ${maskedMobile}):`, body.substring(0, 200));
+      if (res.error) {
+        lastError = `Could not connect to router at ${routerIp}:8443 (${res.error})`;
+        continue;
+      }
 
-          // Check if router directly returned XML configuration (already paired device!)
-          if (body.includes("<wap-provisioningdoc")) {
-            try {
-              const config = this.parseProvisioningXml(body, { routerIp, macAddress: mac, uuid });
-              if (config) {
-                console.log("[Provisioning] Router returned active SIP credentials directly!");
-                resolve({
-                  success: true,
-                  autoConfigured: true,
-                  config,
-                  message: `Device verified by JioFiber router! Automatically configured for line ${config.username}.`,
-                });
-                return;
-              }
-            } catch (e: any) {
-              console.warn("[Provisioning] Failed parsing returned XML:", e.message);
-            }
-          }
+      console.log(`[Provisioning] Router response (status ${res.statusCode}, x-amn: ${res.maskedMobile}):`, res.body.substring(0, 150));
 
-          if (res.statusCode === 200 || body.toLowerCase().includes("otp")) {
-            const message = maskedMobile
-              ? `OTP sent to your registered mobile number (${maskedMobile})`
-              : "OTP sent to your registered Jio mobile number";
-            resolve({
+      // Check if router directly returned XML configuration (already paired device!)
+      if (res.body.includes("<wap-provisioningdoc")) {
+        try {
+          const config = this.parseProvisioningXml(res.body, { routerIp, macAddress: mac, uuid });
+          if (config) {
+            console.log("[Provisioning] Router returned active SIP credentials directly!");
+            return {
               success: true,
-              autoConfigured: false,
-              session: { routerIp, macAddress: mac, cookie, uuid },
-              message,
-            });
-          } else {
-            let errorMsg = `Router returned status ${res.statusCode}: ${body || "Forbidden"}`;
-            if (res.statusCode === 403) {
-              errorMsg = "Router returned 403 Forbidden: JioFiber limit of 6 paired extensions reached or unauthorized MAC.";
-            }
-            resolve({
-              success: false,
-              session: { routerIp, macAddress: mac, cookie, uuid },
-              message: errorMsg,
-            });
+              autoConfigured: true,
+              config,
+              message: `Device verified by JioFiber router! Automatically configured for line ${config.username}.`,
+            };
           }
-        });
-      });
+        } catch (e: any) {
+          console.warn("[Provisioning] Failed parsing returned XML:", e.message);
+        }
+      }
 
-      req.on("error", (err) => {
-        console.error(`[Provisioning] Failed contacting router at ${routerIp}:8443:`, err.message);
-        resolve({
-          success: false,
-          session: { routerIp, macAddress: mac, uuid },
-          message: `Could not connect to router at ${routerIp}:8443 (${err.message})`,
-        });
-      });
-    });
+      if (res.statusCode === 200 || res.body.toLowerCase().includes("otp")) {
+        const message = res.maskedMobile
+          ? `OTP sent to your registered mobile number (${res.maskedMobile})`
+          : "OTP sent to your registered Jio mobile number";
+        return {
+          success: true,
+          autoConfigured: false,
+          session: { routerIp, macAddress: mac, cookie: res.cookie, uuid },
+          message,
+        };
+      }
+
+      if (res.statusCode === 403) {
+        lastError = "Router returned 403 Forbidden: Limit of 6 paired extensions reached or unauthorized device. Use Manual Config tab to connect directly.";
+      } else {
+        lastError = `Router returned status ${res.statusCode}: ${res.body || "Error"}`;
+      }
+    }
+
+    return {
+      success: false,
+      message: lastError,
+    };
   }
 
   public verifyOtp(

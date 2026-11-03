@@ -776,7 +776,11 @@
           }
         } else {
           msg.className = "text-xs text-center text-rose-400";
-          msg.innerText = data.error || "Failed contacting router. Check IP address.";
+          if (data.error && data.error.includes("403")) {
+            msg.innerHTML = '<span>Limit of 6 paired extensions reached or unauthorized device.</span><br/><button type="button" onclick="switchSettingsTab(\'manual\')" class="mt-1.5 inline-block text-xs font-semibold text-indigo-400 hover:text-indigo-300 underline">Switch to Manual Config Tab &rarr;</button>';
+          } else {
+            msg.innerText = data.error || "Failed contacting router. Check IP address.";
+          }
           btn.innerText = "Request SMS OTP from Router";
           btn.disabled = false;
         }
