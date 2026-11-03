@@ -24,14 +24,110 @@
     <div class="flex items-center justify-between pb-4 border-b border-slate-800">
       <div>
         <div class="flex items-center space-x-2">
-          <span id="sipStatusDot" class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span id="sipStatusText" class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">JioFiber Voice</span>
+          <span id="sipStatusDot" class="inline-block w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+          <span id="sipStatusText" class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Connecting...</span>
         </div>
-        <h1 class="text-lg font-bold text-white tracking-tight" id="landlineNumber">+91 81327 96216</h1>
-        <p class="text-xs text-slate-400">Router: 192.168.31.1 (SIP-TLS)</p>
+        <h1 class="text-lg font-bold text-white tracking-tight" id="landlineNumber">Loading...</h1>
+        <p class="text-xs text-slate-400" id="routerHostLabel">Router: Detecting...</p>
       </div>
-      <div class="bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5">
-        <span>Echo Dot Ready</span>
+      <div class="flex items-center gap-2">
+        <button onclick="openSettings()" title="Settings / Router Setup" class="p-2 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition shadow">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+        <div class="bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5">
+          <span>Echo Dot Ready</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings / Router Setup Wizard Modal -->
+    <div id="settingsModal" class="hidden absolute inset-0 bg-slate-950/95 z-50 flex flex-col p-6 animate-fade-in overflow-y-auto">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+        <div>
+          <h2 class="text-base font-bold text-white">Router & Line Setup</h2>
+          <p class="text-[11px] text-slate-400">Configure your JioFiber router connection</p>
+        </div>
+        <button onclick="closeSettings()" class="text-slate-400 hover:text-white p-1 text-sm font-semibold">✕</button>
+      </div>
+
+      <!-- Tab Switcher -->
+      <div class="grid grid-cols-2 bg-slate-800/60 p-1 rounded-xl mb-4 text-xs font-semibold text-center">
+        <button id="tabOtpBtn" onclick="switchSettingsTab('otp')" class="py-1.5 rounded-lg bg-indigo-600 text-white">Auto Pair (OTP)</button>
+        <button id="tabManualBtn" onclick="switchSettingsTab('manual')" class="py-1.5 rounded-lg text-slate-400 hover:text-white">Manual Config</button>
+      </div>
+
+      <!-- OTP Pairing Form -->
+      <div id="otpSection" class="space-y-4">
+        <div>
+          <label class="block text-[11px] font-medium text-slate-300 mb-1">JioFiber Router IP</label>
+          <input type="text" id="otpRouterIp" value="192.168.29.1" class="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-indigo-500" placeholder="192.168.29.1" />
+          <p class="text-[10px] text-slate-500 mt-1">Default Jio router IP is 192.168.29.1 (or 192.168.31.1)</p>
+        </div>
+
+        <button onclick="requestRouterOtp()" id="reqOtpBtn" class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition shadow-lg shadow-indigo-600/30">
+          Request SMS OTP from Router
+        </button>
+
+        <div id="otpVerifyBlock" class="hidden space-y-3 pt-3 border-t border-slate-800">
+          <div>
+            <label class="block text-[11px] font-medium text-indigo-400 mb-1">Enter 5-digit SMS OTP</label>
+            <input type="text" id="otpInput" class="w-full bg-slate-800/80 border border-indigo-500 rounded-xl px-3 py-2 text-center text-xl font-mono tracking-widest text-white outline-none" placeholder="12345" maxlength="6" />
+          </div>
+          <button onclick="verifyRouterOtp()" id="verOtpBtn" class="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition shadow-lg shadow-emerald-600/30">
+            Verify & Connect Softphone
+          </button>
+        </div>
+        <p id="otpStatusMsg" class="text-xs text-center text-slate-400 hidden"></p>
+      </div>
+
+      <!-- Manual Config Form -->
+      <div id="manualSection" class="hidden space-y-3 text-xs">
+        <div>
+          <label class="block text-[11px] font-medium text-slate-300 mb-1">Jio Landline Number</label>
+          <input type="text" id="cfgLandline" class="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500" placeholder="+918132796216" />
+        </div>
+        <div>
+          <label class="block text-[11px] font-medium text-slate-300 mb-1">SIP Password (MD5 Digest)</label>
+          <input type="password" id="cfgPassword" class="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500" placeholder="32-character password" />
+        </div>
+        <div>
+          <label class="block text-[11px] font-medium text-slate-300 mb-1">Router IP & Port</label>
+          <div class="grid grid-cols-3 gap-2">
+            <input type="text" id="cfgHost" class="col-span-2 bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500" placeholder="192.168.29.1" />
+            <input type="number" id="cfgPort" value="5068" class="bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-[11px] font-medium text-slate-300 mb-1">Circle / IMS Realm</label>
+          <select id="cfgCircle" class="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-white outline-none focus:border-indigo-500">
+            <option value="ka.wln.ims.jio.com">Karnataka (ka.wln.ims.jio.com)</option>
+            <option value="dl.wln.ims.jio.com">Delhi (dl.wln.ims.jio.com)</option>
+            <option value="mu.wln.ims.jio.com">Mumbai (mu.wln.ims.jio.com)</option>
+            <option value="mh.wln.ims.jio.com">Maharashtra & Goa (mh.wln.ims.jio.com)</option>
+            <option value="tn.wln.ims.jio.com">Tamil Nadu (tn.wln.ims.jio.com)</option>
+            <option value="ap.wln.ims.jio.com">Andhra Pradesh / Telangana (ap.wln.ims.jio.com)</option>
+            <option value="gj.wln.ims.jio.com">Gujarat (gj.wln.ims.jio.com)</option>
+            <option value="kl.wln.ims.jio.com">Kerala (kl.wln.ims.jio.com)</option>
+            <option value="ko.wln.ims.jio.com">Kolkata (ko.wln.ims.jio.com)</option>
+            <option value="wb.wln.ims.jio.com">West Bengal (wb.wln.ims.jio.com)</option>
+            <option value="pb.wln.ims.jio.com">Punjab (pb.wln.ims.jio.com)</option>
+            <option value="hr.wln.ims.jio.com">Haryana (hr.wln.ims.jio.com)</option>
+            <option value="rj.wln.ims.jio.com">Rajasthan (rj.wln.ims.jio.com)</option>
+            <option value="ue.wln.ims.jio.com">UP East (ue.wln.ims.jio.com)</option>
+            <option value="uw.wln.ims.jio.com">UP West (uw.wln.ims.jio.com)</option>
+            <option value="br.wln.ims.jio.com">Bihar & Jharkhand (br.wln.ims.jio.com)</option>
+            <option value="mp.wln.ims.jio.com">MP & Chhattisgarh (mp.wln.ims.jio.com)</option>
+            <option value="or.wln.ims.jio.com">Odisha (or.wln.ims.jio.com)</option>
+            <option value="as.wln.ims.jio.com">Assam (as.wln.ims.jio.com)</option>
+            <option value="ne.wln.ims.jio.com">North East (ne.wln.ims.jio.com)</option>
+          </select>
+        </div>
+        <button onclick="saveManualConfig()" class="w-full mt-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition shadow-lg shadow-emerald-600/30">
+          Save Configuration & Connect
+        </button>
       </div>
     </div>
 
@@ -443,7 +539,19 @@
           const msg = JSON.parse(event.data);
           console.log("Gateway message:", msg);
 
-          if (msg.type === "incoming_call") {
+          if (msg.type === "init") {
+            if (msg.landline) {
+              document.getElementById("landlineNumber").innerText = msg.landline;
+            }
+            if (!msg.configured) {
+              openSettings();
+            }
+          } else if (msg.type === "config_updated") {
+            if (msg.landline) {
+              document.getElementById("landlineNumber").innerText = msg.landline;
+            }
+            closeSettings();
+          } else if (msg.type === "incoming_call") {
             showIncomingCall(msg.call.caller);
           } else if (msg.type === "call_state") {
             if (msg.call.state === "active" || msg.call.state === "ringing") {
@@ -566,6 +674,152 @@
       document.getElementById('activeCallScreen').classList.add('hidden');
       document.getElementById('incomingCallModal').classList.add('hidden');
       document.getElementById('dialerScreen').classList.remove('hidden');
+    }
+
+    // Settings & First-Run Wizard
+    async function openSettings() {
+      document.getElementById('settingsModal').classList.remove('hidden');
+      try {
+        const res = await fetch('/api/config');
+        const data = await res.json();
+        if (data.landline) document.getElementById('cfgLandline').value = data.landline;
+        if (data.host) {
+          document.getElementById('cfgHost').value = data.host;
+          document.getElementById('otpRouterIp').value = data.host;
+          document.getElementById('routerHostLabel').innerText = `Router: ${data.host} (SIP-TLS)`;
+        }
+        if (data.port) document.getElementById('cfgPort').value = data.port;
+        if (data.realm) document.getElementById('cfgCircle').value = data.realm;
+      } catch (e) {
+        console.warn("Could not pre-fetch config:", e);
+      }
+    }
+
+    function closeSettings() {
+      document.getElementById('settingsModal').classList.add('hidden');
+    }
+
+    function switchSettingsTab(tab) {
+      const otpSec = document.getElementById('otpSection');
+      const manSec = document.getElementById('manualSection');
+      const otpBtn = document.getElementById('tabOtpBtn');
+      const manBtn = document.getElementById('tabManualBtn');
+
+      if (tab === 'otp') {
+        otpSec.classList.remove('hidden');
+        manSec.classList.add('hidden');
+        otpBtn.className = "py-1.5 rounded-lg bg-indigo-600 text-white";
+        manBtn.className = "py-1.5 rounded-lg text-slate-400 hover:text-white";
+      } else {
+        otpSec.classList.add('hidden');
+        manSec.classList.remove('hidden');
+        manBtn.className = "py-1.5 rounded-lg bg-indigo-600 text-white";
+        otpBtn.className = "py-1.5 rounded-lg text-slate-400 hover:text-white";
+      }
+    }
+
+    async function requestRouterOtp() {
+      const routerIp = document.getElementById('otpRouterIp').value.trim() || '192.168.29.1';
+      const btn = document.getElementById('reqOtpBtn');
+      const msg = document.getElementById('otpStatusMsg');
+      btn.disabled = true;
+      btn.innerText = "Requesting OTP from router...";
+      msg.classList.remove('hidden', 'text-rose-400', 'text-emerald-400');
+      msg.classList.add('text-indigo-400');
+      msg.innerText = "Contacting router at " + routerIp + ":8443...";
+
+      try {
+        const res = await fetch('/api/provision/otp/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ routerIp }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          msg.className = "text-xs text-center text-emerald-400";
+          msg.innerText = data.message || "OTP sent! Please check your SMS.";
+          document.getElementById('otpVerifyBlock').classList.remove('hidden');
+          btn.innerText = "Resend SMS OTP";
+          btn.disabled = false;
+        } else {
+          msg.className = "text-xs text-center text-rose-400";
+          msg.innerText = data.error || "Failed contacting router. Check IP address.";
+          btn.innerText = "Request SMS OTP from Router";
+          btn.disabled = false;
+        }
+      } catch (e) {
+        msg.className = "text-xs text-center text-rose-400";
+        msg.innerText = "Network error connecting to gateway: " + e.message;
+        btn.innerText = "Request SMS OTP from Router";
+        btn.disabled = false;
+      }
+    }
+
+    async function verifyRouterOtp() {
+      const otp = document.getElementById('otpInput').value.trim();
+      const btn = document.getElementById('verOtpBtn');
+      const msg = document.getElementById('otpStatusMsg');
+      if (!otp) return;
+
+      btn.disabled = true;
+      btn.innerText = "Verifying with Jio...";
+
+      try {
+        const res = await fetch('/api/provision/otp/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ otp }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          msg.className = "text-xs text-center text-emerald-400";
+          msg.innerText = "Connected! Line: " + data.config.landline;
+          setTimeout(() => {
+            closeSettings();
+            btn.disabled = false;
+            btn.innerText = "Verify & Connect Softphone";
+          }, 1200);
+        } else {
+          msg.className = "text-xs text-center text-rose-400";
+          msg.innerText = data.error || "Invalid OTP code. Please retry.";
+          btn.disabled = false;
+          btn.innerText = "Verify & Connect Softphone";
+        }
+      } catch (e) {
+        msg.className = "text-xs text-center text-rose-400";
+        msg.innerText = "Verification failed: " + e.message;
+        btn.disabled = false;
+        btn.innerText = "Verify & Connect Softphone";
+      }
+    }
+
+    async function saveManualConfig() {
+      const username = document.getElementById('cfgLandline').value.trim();
+      const password = document.getElementById('cfgPassword').value.trim();
+      const host = document.getElementById('cfgHost').value.trim() || '192.168.29.1';
+      const port = parseInt(document.getElementById('cfgPort').value, 10) || 5068;
+      const realm = document.getElementById('cfgCircle').value;
+
+      if (!username || !password) {
+        alert("Please enter both landline number and SIP password.");
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, host, port, realm }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          closeSettings();
+        } else {
+          alert("Error saving: " + data.error);
+        }
+      } catch (e) {
+        alert("Failed saving configuration: " + e.message);
+      }
     }
 
     connectWS();

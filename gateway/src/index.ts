@@ -4,6 +4,8 @@ import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
 import path from "path";
 import { JioSipClient } from "./sipClient";
+import { loadConfig, saveConfig, isConfigured, JioConfig, JIO_CIRCLES } from "./config";
+import { JioProvisioningService, ProvisioningSession } from "./provisioning";
 
 export type CallState =
   | "idle"
@@ -30,8 +32,11 @@ class JioVoiceGateway {
   private connectedClients = new Set<WebSocket>();
 
   private activeCall: ActiveCall | null = null;
-  private landlineNumber = "+91 81327 96216";
+  private currentConfig: JioConfig | null = null;
+  private landlineNumber = "Not Configured";
   private sipClient: JioSipClient;
+  private provisioningService = new JioProvisioningService();
+  private pendingOtpSession: ProvisioningSession | null = null;
 
   constructor() {
     this.app.use(cors());
@@ -44,8 +49,14 @@ class JioVoiceGateway {
     this.server = http.createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
 
+    // Load configuration dynamically from config.json or environment
+    this.currentConfig = loadConfig();
+    if (this.currentConfig) {
+      this.landlineNumber = this.currentConfig.username;
+    }
+
     // Initialize standalone Jio SIP Client
-    this.sipClient = new JioSipClient();
+    this.sipClient = new JioSipClient(this.currentConfig || undefined);
     this.setupSipEvents();
 
     this.setupRoutes();
@@ -148,10 +159,108 @@ class JioVoiceGateway {
         service: "JioFiber Voice Standalone Gateway",
         status: "online",
         sipRegistered: this.sipClient.isRegistered(),
+        configured: isConfigured(this.currentConfig),
         landline: this.landlineNumber,
         activeCall: this.activeCall,
         connectedDevices: this.connectedClients.size,
       });
+    });
+
+    // Get current config / circles info
+    this.app.get("/api/config", (req, res) => {
+      res.json({
+        configured: isConfigured(this.currentConfig),
+        landline: this.currentConfig?.username || "",
+        host: this.currentConfig?.host || "192.168.29.1",
+        port: this.currentConfig?.port || 5068,
+        realm: this.currentConfig?.realm || "ka.wln.ims.jio.com",
+        circles: JIO_CIRCLES,
+      });
+    });
+
+    // Save manual config
+    this.app.post("/api/config", (req, res) => {
+      const { host, port, username, password, realm, uuid } = req.body;
+      if (!username || !password || !realm) {
+        return res.status(400).json({ error: "username, password, and realm are required." });
+      }
+
+      const newConfig: JioConfig = {
+        host: host || "192.168.29.1",
+        port: parseInt(port || 5068, 10),
+        username: username.trim(),
+        password: password.trim(),
+        realm: realm.trim(),
+        publicId: username.trim(),
+        uuid: uuid || "00000000-0000-1000-8000-000085EA2C9F",
+      };
+
+      saveConfig(newConfig);
+      this.currentConfig = newConfig;
+      this.landlineNumber = newConfig.username;
+      this.sipClient.updateConfig(newConfig);
+
+      this.broadcast({
+        type: "config_updated",
+        configured: true,
+        landline: this.landlineNumber,
+      });
+
+      res.json({ success: true, message: "Configuration saved successfully." });
+    });
+
+    // Request OTP from Jio router for automatic setup
+    this.app.post("/api/provision/otp/request", async (req, res) => {
+      const { routerIp } = req.body;
+      const targetHost = routerIp || this.currentConfig?.host || "192.168.29.1";
+      console.log(`[Provisioning] Requesting OTP pairing from router at ${targetHost}...`);
+
+      const result = await this.provisioningService.requestOtp(targetHost);
+      if (result.success) {
+        this.pendingOtpSession = result.session;
+        res.json({ success: true, message: result.message });
+      } else {
+        res.status(400).json({ success: false, error: result.message });
+      }
+    });
+
+    // Verify OTP and auto-configure
+    this.app.post("/api/provision/otp/verify", async (req, res) => {
+      const { otp } = req.body;
+      if (!otp) {
+        return res.status(400).json({ error: "OTP is required." });
+      }
+      if (!this.pendingOtpSession) {
+        return res.status(400).json({ error: "No active OTP request session. Please request OTP first." });
+      }
+
+      console.log(`[Provisioning] Verifying OTP with router...`);
+      const result = await this.provisioningService.verifyOtp(this.pendingOtpSession, otp);
+      if (result.success && result.config) {
+        saveConfig(result.config);
+        this.currentConfig = result.config;
+        this.landlineNumber = result.config.username;
+        this.sipClient.updateConfig(result.config);
+
+        this.broadcast({
+          type: "config_updated",
+          configured: true,
+          landline: this.landlineNumber,
+        });
+
+        this.pendingOtpSession = null;
+        res.json({
+          success: true,
+          message: "Router paired successfully! Softphone is ready.",
+          config: {
+            landline: result.config.username,
+            realm: result.config.realm,
+            host: result.config.host,
+          },
+        });
+      } else {
+        res.status(400).json({ success: false, error: result.error || "Failed verifying OTP with router." });
+      }
     });
 
     // Make outgoing call from Desktop UI or Alexa directly via Jio SIP-TLS
@@ -308,6 +417,7 @@ class JioVoiceGateway {
           type: "init",
           landline: this.landlineNumber,
           sipRegistered: this.sipClient.isRegistered(),
+          configured: isConfigured(this.currentConfig),
           activeCall: this.activeCall,
         })
       );

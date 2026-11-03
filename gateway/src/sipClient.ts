@@ -48,13 +48,13 @@ export class JioSipClient extends EventEmitter {
     uuid?: string;
   }) {
     super();
-    this.host = config?.host || "2409:40f2:151:33e3:7ebf:77ff:fe04:495d";
-    this.port = config?.port || 5068;
-    this.username = config?.username || "918132796216@ka.wln.ims.jio.com";
-    this.password = config?.password || "05858f6d35";
-    this.realm = config?.realm || "ka.wln.ims.jio.com";
-    this.publicId = config?.publicId || "+918132796216";
-    this.uuid = config?.uuid || "00000000-0000-1000-8000-000085EA2C9F";
+    this.host = config?.host || process.env.JIO_ROUTER_HOST || "192.168.29.1";
+    this.port = config?.port || parseInt(process.env.JIO_ROUTER_PORT || "5068", 10);
+    this.username = config?.username || process.env.JIO_LANDLINE_NUMBER || "";
+    this.password = config?.password || process.env.JIO_SIP_PASSWORD || "";
+    this.realm = config?.realm || process.env.JIO_IMS_REALM || "";
+    this.publicId = config?.publicId || this.username;
+    this.uuid = config?.uuid || process.env.JIO_CLIENT_UUID || "00000000-0000-1000-8000-000085EA2C9F";
 
     this.rtpEngine = new RtpEngine({ localPort: this.rtpPort });
     this.rtpEngine.on("audio", (data) => {
@@ -65,12 +65,52 @@ export class JioSipClient extends EventEmitter {
     });
   }
 
+  public updateConfig(config: {
+    host?: string;
+    port?: number;
+    username: string;
+    password: string;
+    realm: string;
+    publicId?: string;
+    uuid?: string;
+  }) {
+    console.log(`[SIP] Applying new configuration for user ${config.username}...`);
+    this.disconnect();
+    this.host = config.host || this.host;
+    this.port = config.port || this.port;
+    this.username = config.username;
+    this.password = config.password;
+    this.realm = config.realm;
+    this.publicId = config.publicId || config.username;
+    this.uuid = config.uuid || this.uuid;
+    this.connect();
+  }
+
+  public disconnect() {
+    if (this.keepAliveTimer) {
+      clearInterval(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+    if (this.socket) {
+      try {
+        this.socket.destroy();
+      } catch (e) {}
+      this.socket = null;
+    }
+    this.registered = false;
+    this.emit("registered", false);
+  }
+
   private formatIp(ip?: string): string {
     if (!ip) return "127.0.0.1";
     return ip.includes(":") && !ip.startsWith("[") ? `[${ip}]` : ip;
   }
 
   public connect() {
+    if (!this.username || !this.password || !this.realm) {
+      console.log(`[SIP] Gateway unconfigured. Waiting for credentials via Settings / Setup Wizard...`);
+      return;
+    }
     console.log(`[SIP] Connecting to JioFiber router SIP-TLS at [${this.host}]:${this.port}...`);
     try {
       this.socket = tls.connect(
@@ -99,13 +139,6 @@ export class JioSipClient extends EventEmitter {
 
       this.socket.on("error", (err) => {
         console.error(`[SIP] TLS socket error on ${this.host}:`, err.message);
-        // Switch between IPv6 and IPv4 on connection error
-        if (this.host.includes(":")) {
-          console.log(`[SIP] Switching host fallback to IPv4 192.168.31.1`);
-          this.host = "192.168.31.1";
-        } else {
-          this.host = "2409:40f2:151:33e3:7ebf:77ff:fe04:495d";
-        }
       });
     } catch (e: any) {
       console.error(`[SIP] Exception initiating TLS connection:`, e.message);

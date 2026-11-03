@@ -12,11 +12,13 @@
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "dotenv": "^18.0.9",
     "express": "^4.21.2",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
+    "@types/dotenv": "^6.1.1",
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.0",
     "@types/ws": "^8.5.14",
