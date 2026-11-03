@@ -50,10 +50,27 @@ export class JioSipClient extends EventEmitter {
     super();
     this.host = config?.host || process.env.JIO_ROUTER_HOST || "192.168.29.1";
     this.port = config?.port || parseInt(process.env.JIO_ROUTER_PORT || "5068", 10);
-    this.username = config?.username || process.env.JIO_LANDLINE_NUMBER || "";
-    this.password = config?.password || process.env.JIO_SIP_PASSWORD || "";
     this.realm = config?.realm || process.env.JIO_IMS_REALM || "";
-    this.publicId = config?.publicId || this.username;
+
+    const rawUser = config?.username || process.env.JIO_LANDLINE_NUMBER || "";
+    if (rawUser && !rawUser.includes("@") && this.realm) {
+      const digits = rawUser.replace(/[^0-9]/g, "");
+      const fullDigits = digits.startsWith("91") ? digits : `91${digits}`;
+      this.username = `${fullDigits}@${this.realm}`;
+    } else {
+      this.username = rawUser;
+    }
+
+    const rawPublic = config?.publicId || config?.username || process.env.JIO_LANDLINE_NUMBER || "";
+    if (rawPublic) {
+      const digits = rawPublic.split("@")[0].replace(/[^0-9]/g, "");
+      const fullDigits = digits.startsWith("91") ? digits : `91${digits}`;
+      this.publicId = `+${fullDigits}`;
+    } else {
+      this.publicId = this.username;
+    }
+
+    this.password = config?.password || process.env.JIO_SIP_PASSWORD || "";
     this.uuid = config?.uuid || process.env.JIO_CLIENT_UUID || "00000000-0000-1000-8000-000085EA2C9F";
 
     this.rtpEngine = new RtpEngine({ localPort: this.rtpPort });
@@ -78,10 +95,27 @@ export class JioSipClient extends EventEmitter {
     this.disconnect();
     this.host = config.host || this.host;
     this.port = config.port || this.port;
-    this.username = config.username;
-    this.password = config.password;
     this.realm = config.realm;
-    this.publicId = config.publicId || config.username;
+    this.password = config.password;
+
+    const rawUser = config.username;
+    if (rawUser && !rawUser.includes("@") && this.realm) {
+      const digits = rawUser.replace(/[^0-9]/g, "");
+      const fullDigits = digits.startsWith("91") ? digits : `91${digits}`;
+      this.username = `${fullDigits}@${this.realm}`;
+    } else {
+      this.username = rawUser;
+    }
+
+    const rawPublic = config.publicId || config.username;
+    if (rawPublic) {
+      const digits = rawPublic.split("@")[0].replace(/[^0-9]/g, "");
+      const fullDigits = digits.startsWith("91") ? digits : `91${digits}`;
+      this.publicId = `+${fullDigits}`;
+    } else {
+      this.publicId = this.username;
+    }
+
     this.uuid = config.uuid || this.uuid;
     this.connect();
   }
