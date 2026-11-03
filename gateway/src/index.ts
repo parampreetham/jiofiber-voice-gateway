@@ -4,7 +4,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
 import path from "path";
 import { JioSipClient } from "./sipClient";
-import { loadConfig, saveConfig, isConfigured, JioConfig, JIO_CIRCLES } from "./config";
+import { loadConfig, saveConfig, isConfigured, detectDefaultGateway, JioConfig, JIO_CIRCLES } from "./config";
 import { JioProvisioningService, ProvisioningSession } from "./provisioning";
 
 export type CallState =
@@ -166,12 +166,14 @@ class JioVoiceGateway {
       });
     });
 
-    // Get current config / circles info
+    // Get current config / circles info & detected router IP
     this.app.get("/api/config", (req, res) => {
+      const detectedIp = detectDefaultGateway();
       res.json({
         configured: isConfigured(this.currentConfig),
         landline: this.currentConfig?.username || "",
-        host: this.currentConfig?.host || "192.168.29.1",
+        host: this.currentConfig?.host || detectedIp,
+        detectedRouterIp: detectedIp,
         port: this.currentConfig?.port || 5068,
         realm: this.currentConfig?.realm || "ka.wln.ims.jio.com",
         circles: JIO_CIRCLES,

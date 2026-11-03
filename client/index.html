@@ -76,8 +76,8 @@
 
         <div>
           <label class="block text-[11px] font-medium text-slate-300 mb-1">JioFiber Router IP (LAN)</label>
-          <input type="text" id="otpRouterIp" value="192.168.29.1" class="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-indigo-500" placeholder="192.168.29.1" />
-          <p class="text-[10px] text-slate-500 mt-1">Default Jio router IP is 192.168.29.1 (or 192.168.31.1 if using custom mesh)</p>
+          <input type="text" id="otpRouterIp" value="192.168.31.1" class="w-full bg-slate-800/80 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-indigo-500" placeholder="192.168.31.1" />
+          <p class="text-[10px] text-slate-500 mt-1">Auto-detected for your network (default Jio ONT is 192.168.29.1, custom subnet is 192.168.31.1)</p>
         </div>
 
         <button onclick="requestRouterOtp()" id="reqOtpBtn" class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition shadow-lg shadow-indigo-600/30">
@@ -243,7 +243,7 @@
 
     <!-- Footer Devices Status -->
     <div class="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
-      <span>Gateway: <span class="text-emerald-400 font-mono">192.168.31.1</span></span>
+      <span>Gateway: <span id="footerGatewayIp" class="text-emerald-400 font-mono">192.168.31.1</span></span>
       <span>Circle: <span class="text-slate-300">Karnataka (KA)</span></span>
     </div>
   </div>
@@ -690,22 +690,31 @@
     }
 
     // Settings & First-Run Wizard
-    async function openSettings() {
-      document.getElementById('settingsModal').classList.remove('hidden');
+    async function fetchConfig() {
       try {
         const res = await fetch('/api/config');
         const data = await res.json();
-        if (data.landline) document.getElementById('cfgLandline').value = data.landline;
-        if (data.host) {
-          document.getElementById('cfgHost').value = data.host;
-          document.getElementById('otpRouterIp').value = data.host;
-          document.getElementById('routerHostLabel').innerText = `Router: ${data.host} (SIP-TLS)`;
+        const effectiveHost = data.detectedRouterIp || data.host || '192.168.31.1';
+        if (data.landline) {
+          document.getElementById('cfgLandline').value = data.landline;
+          document.getElementById('landlineNumber').innerText = data.landline;
         }
+        document.getElementById('cfgHost').value = data.host || effectiveHost;
+        document.getElementById('otpRouterIp').value = effectiveHost;
+        document.getElementById('routerHostLabel').innerText = `Router: ${effectiveHost} (SIP-TLS)`;
+        const footerGateway = document.getElementById('footerGatewayIp');
+        if (footerGateway) footerGateway.innerText = effectiveHost;
         if (data.port) document.getElementById('cfgPort').value = data.port;
         if (data.realm) document.getElementById('cfgCircle').value = data.realm;
+        return data;
       } catch (e) {
         console.warn("Could not pre-fetch config:", e);
       }
+    }
+
+    async function openSettings() {
+      document.getElementById('settingsModal').classList.remove('hidden');
+      await fetchConfig();
     }
 
     function closeSettings() {
@@ -835,6 +844,7 @@
       }
     }
 
+    fetchConfig();
     connectWS();
   </script>
 </body>

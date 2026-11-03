@@ -1,8 +1,26 @@
 import fs from "fs";
 import path from "path";
+import os from "os";
 import dotenv from "dotenv";
 
 dotenv.config();
+
+export function detectDefaultGateway(): string {
+  try {
+    const ifaces = os.networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+      for (const iface of ifaces[name] || []) {
+        if (iface.family === "IPv4" && !iface.internal) {
+          const parts = iface.address.split(".");
+          if (parts.length === 4) {
+            return `${parts[0]}.${parts[1]}.${parts[2]}.1`;
+          }
+        }
+      }
+    }
+  } catch (e) {}
+  return "192.168.29.1";
+}
 
 export interface JioConfig {
   host: string;
