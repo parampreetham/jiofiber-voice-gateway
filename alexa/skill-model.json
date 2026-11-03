@@ -1,0 +1,60 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "jio landline",
+      "intents": [
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": []
+        },
+        {
+          "name": "DialIntent",
+          "slots": [
+            {
+              "name": "PhoneNumber",
+              "type": "AMAZON.PhoneNumber"
+            }
+          ],
+          "samples": [
+            "call {PhoneNumber}",
+            "dial {PhoneNumber}",
+            "call to {PhoneNumber}",
+            "make a call to {PhoneNumber}",
+            "phone {PhoneNumber}"
+          ]
+        },
+        {
+          "name": "AnswerIntent",
+          "slots": [],
+          "samples": [
+            "answer",
+            "pick up",
+            "answer call",
+            "answer the call",
+            "pick up the phone"
+          ]
+        },
+        {
+          "name": "HangupIntent",
+          "slots": [],
+          "samples": [
+            "hang up",
+            "end call",
+            "disconnect",
+            "hang up the call",
+            "end the call"
+          ]
+        }
+      ],
+      "types": []
+    }
+  }
+}
