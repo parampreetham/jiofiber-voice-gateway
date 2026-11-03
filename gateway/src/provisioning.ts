@@ -27,16 +27,20 @@ export class JioProvisioningService {
       const req = https.get(url, { agent: this.agent, timeout: 8000 }, (res) => {
         const rawCookies = res.headers["set-cookie"] || [];
         const cookie = rawCookies.map((c) => c.split(";")[0]).join("; ");
+        const maskedMobile = (res.headers["x-amn"] as string) || "";
 
         let body = "";
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () => {
-          console.log(`[Provisioning] Router OTP response (status ${res.statusCode}):`, body.substring(0, 200));
+          console.log(`[Provisioning] Router OTP response (status ${res.statusCode}, x-amn: ${maskedMobile}):`, body.substring(0, 200));
           if (res.statusCode === 200 || body.toLowerCase().includes("otp")) {
+            const message = maskedMobile
+              ? `OTP sent to your registered mobile number (${maskedMobile})`
+              : "OTP sent to your registered Jio mobile number";
             resolve({
               success: true,
               session: { routerIp, macAddress: mac, cookie, uuid },
-              message: "OTP sent to registered Jio mobile number",
+              message,
             });
           } else {
             resolve({
