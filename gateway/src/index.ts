@@ -112,6 +112,15 @@ class JioVoiceGateway {
         }, 300);
       }
     });
+
+    // Forward incoming RTP audio from Jio IMS to connected softphone clients
+    this.sipClient.on("audio", ({ payload }) => {
+      for (const client of this.connectedClients) {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(payload);
+        }
+      }
+    });
   }
 
   private setupRoutes() {
@@ -285,7 +294,13 @@ class JioVoiceGateway {
         })
       );
 
-      ws.on("message", async (data: string) => {
+      ws.on("message", async (data: any, isBinary: boolean) => {
+        // If binary, it's microphone audio from browser softphone -> forward to Jio RTP
+        if (isBinary || (Buffer.isBuffer(data) && !data.toString().startsWith("{"))) {
+          this.sipClient.sendAudio(Buffer.isBuffer(data) ? data : Buffer.from(data));
+          return;
+        }
+
         try {
           const msg = JSON.parse(data.toString());
           console.log("[Gateway] Received WebSocket message:", msg.type);

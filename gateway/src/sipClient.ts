@@ -1,7 +1,7 @@
 import tls from "tls";
 import crypto from "crypto";
 import EventEmitter from "events";
-import dgram from "dgram";
+import { RtpEngine } from "./rtpEngine";
 
 export interface SipCallSession {
   callId: string;
@@ -35,7 +35,7 @@ export class JioSipClient extends EventEmitter {
   private keepAliveTimer: NodeJS.Timeout | null = null;
   private activeSession: SipCallSession | null = null;
   private rxBuffer = "";
-  private rtpSocket: dgram.Socket | null = null;
+  private rtpEngine: RtpEngine;
   private rtpPort = 20000;
 
   constructor(config?: {
@@ -56,21 +56,13 @@ export class JioSipClient extends EventEmitter {
     this.publicId = config?.publicId || "+918132796216";
     this.uuid = config?.uuid || "00000000-0000-1000-8000-000085EA2C9F";
 
-    this.initRtp();
-  }
-
-  private initRtp() {
-    try {
-      this.rtpSocket = dgram.createSocket("udp4");
-      this.rtpSocket.bind(this.rtpPort, () => {
-        console.log(`[SIP] RTP audio socket bound to UDP port ${this.rtpPort}`);
-      });
-      this.rtpSocket.on("error", (err) => {
-        console.error("[SIP] RTP socket error:", err);
-      });
-    } catch (e) {
-      console.warn("[SIP] Failed to bind local RTP socket:", e);
-    }
+    this.rtpEngine = new RtpEngine({ localPort: this.rtpPort });
+    this.rtpEngine.on("audio", (data) => {
+      this.emit("audio", data);
+    });
+    this.rtpEngine.init().catch((err) => {
+      console.error("[SIP] Failed to initialize RTP engine:", err);
+    });
   }
 
   private formatIp(ip?: string): string {
@@ -276,6 +268,7 @@ export class JioSipClient extends EventEmitter {
     if (startLine.startsWith("BYE")) {
       console.log(`[SIP] BYE received from remote.`);
       this.sendResponse("200 OK", msg);
+      this.rtpEngine.stopSession();
       if (this.activeSession) {
         this.activeSession.state = "ended";
         this.emit("call_ended", this.activeSession);
@@ -288,6 +281,7 @@ export class JioSipClient extends EventEmitter {
     if (startLine.startsWith("CANCEL")) {
       console.log(`[SIP] CANCEL received from remote.`);
       this.sendResponse("200 OK", msg);
+      this.rtpEngine.stopSession();
       if (this.activeSession) {
         this.activeSession.state = "ended";
         this.emit("call_ended", this.activeSession);
@@ -386,10 +380,15 @@ export class JioSipClient extends EventEmitter {
     ) {
       console.log(`[SIP] Call ended/rejected: ${startLine}`);
       this.sendAck();
+      this.rtpEngine.stopSession();
       this.activeSession.state = "ended";
       this.emit("call_ended", this.activeSession);
       this.activeSession = null;
     }
+  }
+
+  public sendAudio(chunk: Buffer) {
+    this.rtpEngine.sendAudio(chunk);
   }
 
   private parseRemoteSdp(msg: string) {
@@ -399,14 +398,27 @@ export class JioSipClient extends EventEmitter {
     const sdp = msg.substring(sdpIndex + 4);
 
     const cMatch = sdp.match(/c=IN IP6 ([^\s\r\n]+)/i) || sdp.match(/c=IN IP4 ([^\s\r\n]+)/i);
-    const mMatch = sdp.match(/m=audio (\d+) RTP/i);
+    const mMatch = sdp.match(/m=audio (\d+) RTP\/[A-Z0-9\/\+]+(?:\s+([0-9\s]+))?/i) || sdp.match(/m=audio (\d+) RTP/i);
 
     if (cMatch) this.activeSession.remoteRtpIp = cMatch[1];
     if (mMatch) this.activeSession.remoteRtpPort = parseInt(mMatch[1], 10);
 
+    let selectedPt = 0; // Default PCMU
+    if (mMatch && mMatch[2]) {
+      const pts = mMatch[2].trim().split(/\s+/).map(Number);
+      if (pts.includes(0)) selectedPt = 0; // PCMU
+      else if (pts.includes(8)) selectedPt = 8; // PCMA
+      else selectedPt = pts[0];
+    }
+
     if (this.activeSession.remoteRtpIp && this.activeSession.remoteRtpPort) {
       console.log(
-        `[SIP] Remote RTP endpoint established: [${this.activeSession.remoteRtpIp}]:${this.activeSession.remoteRtpPort}`
+        `[SIP] Remote RTP endpoint established: [${this.activeSession.remoteRtpIp}]:${this.activeSession.remoteRtpPort} (Codec PT: ${selectedPt})`
+      );
+      this.rtpEngine.startSession(
+        this.activeSession.remoteRtpIp,
+        this.activeSession.remoteRtpPort,
+        selectedPt
       );
     }
   }
@@ -522,18 +534,16 @@ export class JioSipClient extends EventEmitter {
       "s=-",
       `c=IN ${ipProto} ${localIp}`,
       "t=0 0",
-      `m=audio ${this.rtpPort} RTP/AVP 104 102 9 0 8 101`,
-      "a=rtpmap:104 AMR-WB/16000/1",
-      "a=fmtp:104 mode-change-capability=2;max-red=0",
-      "a=rtpmap:102 AMR/8000/1",
-      "a=fmtp:102 mode-change-capability=2;max-red=0",
-      "a=rtpmap:9 G722/8000",
+      `m=audio ${this.rtpPort} RTP/AVP 0 8 102 104 101`,
       "a=rtpmap:0 PCMU/8000",
       "a=rtpmap:8 PCMA/8000",
+      "a=rtpmap:102 AMR/8000",
+      "a=fmtp:102 mode-change-capability=2;max-red=0",
+      "a=rtpmap:104 AMR-WB/16000",
+      "a=fmtp:104 mode-change-capability=2;max-red=0",
       "a=rtpmap:101 telephone-event/8000",
       "a=fmtp:101 0-15",
       "a=ptime:20",
-      "a=maxptime:40",
       "a=sendrecv",
     ];
     const sdp = sdpLines.join("\r\n") + "\r\n";
@@ -606,14 +616,13 @@ export class JioSipClient extends EventEmitter {
       "s=-",
       `c=IN ${ipProto} ${localIp}`,
       "t=0 0",
-      `m=audio ${this.rtpPort} RTP/AVP 104 102 9 0 8 101`,
-      "a=rtpmap:104 AMR-WB/16000/1",
-      "a=fmtp:104 mode-change-capability=2;max-red=0",
-      "a=rtpmap:102 AMR/8000/1",
-      "a=fmtp:102 mode-change-capability=2;max-red=0",
-      "a=rtpmap:9 G722/8000",
+      `m=audio ${this.rtpPort} RTP/AVP 0 8 102 104 101`,
       "a=rtpmap:0 PCMU/8000",
       "a=rtpmap:8 PCMA/8000",
+      "a=rtpmap:102 AMR/8000",
+      "a=fmtp:102 mode-change-capability=2;max-red=0",
+      "a=rtpmap:104 AMR-WB/16000",
+      "a=fmtp:104 mode-change-capability=2;max-red=0",
       "a=rtpmap:101 telephone-event/8000",
       "a=fmtp:101 0-15",
       "a=ptime:20",
@@ -693,6 +702,7 @@ export class JioSipClient extends EventEmitter {
       console.log(`[SIP] Sent BYE for call ${this.activeSession.callId}`);
     }
 
+    this.rtpEngine.stopSession();
     this.activeSession.state = "ended";
     this.emit("call_ended", this.activeSession);
     this.activeSession = null;

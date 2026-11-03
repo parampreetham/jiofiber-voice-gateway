@@ -9,6 +9,12 @@
   <style>
     body { font-family: 'Inter', sans-serif; }
     .glass { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.15); opacity: 0.3; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .audio-pulse { animation: pulse-ring 2s infinite ease-in-out; }
   </style>
 </head>
 <body class="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 min-h-screen text-slate-100 flex items-center justify-center p-4">
@@ -18,8 +24,8 @@
     <div class="flex items-center justify-between pb-4 border-b border-slate-800">
       <div>
         <div class="flex items-center space-x-2">
-          <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">JioFiber Voice</span>
+          <span id="sipStatusDot" class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span id="sipStatusText" class="text-xs uppercase tracking-wider text-emerald-400 font-semibold">JioFiber Voice</span>
         </div>
         <h1 class="text-lg font-bold text-white tracking-tight" id="landlineNumber">+91 81327 96216</h1>
         <p class="text-xs text-slate-400">Router: 192.168.31.1 (SIP-TLS)</p>
@@ -56,18 +62,32 @@
 
     <!-- Active Call Screen (Hidden by default) -->
     <div id="activeCallScreen" class="hidden py-8 text-center">
-      <div class="w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-500 mx-auto flex items-center justify-center mb-4">
-        <svg class="w-8 h-8 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-        </svg>
+      <div class="relative w-24 h-24 mx-auto mb-4 flex items-center justify-center">
+        <div class="absolute inset-0 rounded-full bg-emerald-500/20 audio-pulse"></div>
+        <div class="w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-500 flex items-center justify-center relative z-10">
+          <svg class="w-8 h-8 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z" />
+          </svg>
+        </div>
       </div>
       <h2 id="activeCallerName" class="text-xl font-bold text-white">+91 98451 31764</h2>
       <p id="callTimer" class="text-sm text-emerald-400 font-mono mt-1">00:00</p>
-      <p class="text-xs text-slate-500 mt-1">Codec: AMR-WB (16kHz HD Voice)</p>
+      <div class="inline-flex items-center gap-1.5 mt-2 bg-slate-800/80 px-3 py-1 rounded-full text-xs text-slate-300">
+        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+        <span id="callAudioStatus">Audio Streaming (G.711u 64kbps)</span>
+      </div>
 
-      <div class="mt-8 flex justify-center gap-4">
-        <button onclick="hangupCall()" class="w-14 h-14 rounded-full bg-rose-600 hover:bg-rose-500 flex items-center justify-center text-white shadow-lg transition">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div class="mt-8 flex justify-center items-center gap-6">
+        <!-- Mute Button -->
+        <button id="muteBtn" onclick="toggleMute()" class="w-12 h-12 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white transition shadow">
+          <svg id="micIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z" />
+          </svg>
+        </button>
+
+        <!-- Hangup Button -->
+        <button onclick="hangupCall()" class="w-16 h-16 rounded-full bg-rose-600 hover:bg-rose-500 active:scale-95 flex items-center justify-center text-white shadow-lg shadow-rose-600/40 transition">
+          <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
@@ -109,11 +129,6 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
           </svg>
         </button>
-        <button onclick="testIncoming()" title="Test Incoming Call" class="w-12 h-12 rounded-full text-indigo-400 hover:text-indigo-300 flex items-center justify-center transition">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-          </svg>
-        </button>
       </div>
     </div>
 
@@ -128,26 +143,197 @@
     let ws;
     let timerInterval = null;
     let secondsElapsed = 0;
+    let isMuted = false;
+
+    // Web Audio Engine
+    let audioCtx = null;
+    let micStream = null;
+    let scriptNode = null;
+    let nextPlayTime = 0;
+
+    // G.711 u-law encode table & logic
+    const BIAS = 0x84;
+    const CLIP = 32635;
+
+    function encodeUlawSample(pcm) {
+      let sign = (pcm >> 8) & 0x80;
+      if (sign !== 0) pcm = -pcm;
+      if (pcm > CLIP) pcm = CLIP;
+      pcm += BIAS;
+      let exponent = 7;
+      for (let expMask = 0x4000; (pcm & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1) {}
+      let mantissa = (pcm >> (exponent + 3)) & 0x0f;
+      return ~(sign | (exponent << 4) | mantissa) & 0xff;
+    }
+
+    // G.711 u-law decode lookup table
+    const ULAW_TABLE = new Int16Array(256);
+    for (let i = 0; i < 256; i++) {
+      let u = ~i & 0xff;
+      let sign = u & 0x80;
+      let exponent = (u >> 4) & 0x07;
+      let mantissa = u & 0x0f;
+      let sample = ((mantissa << 3) + 0x84) << exponent;
+      sample -= 0x84;
+      ULAW_TABLE[i] = sign !== 0 ? -sample : sample;
+    }
+
+    function decodeUlawToFloat32(uint8Array) {
+      const pcm = new Float32Array(uint8Array.length);
+      for (let i = 0; i < uint8Array.length; i++) {
+        pcm[i] = ULAW_TABLE[uint8Array[i]] / 32768.0;
+      }
+      return pcm;
+    }
+
+    async function initAudioEngine() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+      nextPlayTime = audioCtx.currentTime;
+
+      if (!micStream) {
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            }
+          });
+
+          const micSource = audioCtx.createMediaStreamSource(micStream);
+          const bufferSize = 2048;
+          scriptNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+
+          const inputSampleRate = audioCtx.sampleRate;
+          const targetSampleRate = 8000;
+          const resampleRatio = targetSampleRate / inputSampleRate;
+          let resampleBuffer = [];
+
+          scriptNode.onaudioprocess = (e) => {
+            // Mute local loopback to avoid feedback
+            const output = e.outputBuffer.getChannelData(0);
+            output.fill(0);
+
+            if (isMuted) return;
+
+            const input = e.inputBuffer.getChannelData(0);
+            const outLength = Math.floor(input.length * resampleRatio);
+
+            for (let i = 0; i < outLength; i++) {
+              let inIdx = Math.floor(i / resampleRatio);
+              let sample = input[inIdx];
+              let pcm16 = Math.max(-32768, Math.min(32767, Math.floor(sample * 32767)));
+              resampleBuffer.push(encodeUlawSample(pcm16));
+            }
+
+            // Send in 160-sample (20ms) chunks
+            while (resampleBuffer.length >= 160) {
+              const chunk = new Uint8Array(resampleBuffer.splice(0, 160));
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(chunk.buffer);
+              }
+            }
+          };
+
+          micSource.connect(scriptNode);
+          scriptNode.connect(audioCtx.destination);
+          console.log("[Audio] Microphone stream capture active at 8000 Hz PCMU");
+        } catch (err) {
+          console.warn("[Audio] Could not access microphone:", err.message);
+        }
+      }
+    }
+
+    function stopAudioEngine() {
+      if (micStream) {
+        micStream.getTracks().forEach(t => t.stop());
+        micStream = null;
+      }
+      if (scriptNode) {
+        scriptNode.disconnect();
+        scriptNode = null;
+      }
+      if (audioCtx) {
+        audioCtx.close().catch(() => {});
+        audioCtx = null;
+      }
+    }
+
+    function playIncomingAudio(buffer) {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        nextPlayTime = audioCtx.currentTime;
+      }
+
+      const uint8 = new Uint8Array(buffer);
+      if (uint8.length === 0) return;
+
+      const pcmFloat = decodeUlawToFloat32(uint8);
+      const audioBuffer = audioCtx.createBuffer(1, pcmFloat.length, 8000);
+      audioBuffer.copyToChannel(pcmFloat, 0);
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioCtx.destination);
+
+      const now = audioCtx.currentTime;
+      if (nextPlayTime < now) {
+        nextPlayTime = now + 0.04; // 40ms jitter buffer
+      }
+      source.start(nextPlayTime);
+      nextPlayTime += audioBuffer.duration;
+    }
 
     function connectWS() {
       ws = new WebSocket("ws://localhost:8088");
-      ws.onopen = () => console.log("Connected to JioFiber Voice Gateway");
-      ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        console.log("Gateway message:", msg);
+      ws.binaryType = "arraybuffer";
 
-        if (msg.type === "incoming_call") {
-          showIncomingCall(msg.call.caller);
-        } else if (msg.type === "call_state") {
-          if (msg.call.state === "active") {
-            showActiveCall(msg.call.caller);
-          } else if (msg.call.state === "ending") {
+      ws.onopen = () => console.log("Connected to JioFiber Voice Gateway");
+
+      ws.onmessage = (event) => {
+        // Binary data = Incoming Audio payload from Jio IMS
+        if (event.data instanceof ArrayBuffer) {
+          playIncomingAudio(event.data);
+          return;
+        }
+
+        try {
+          const msg = JSON.parse(event.data);
+          console.log("Gateway message:", msg);
+
+          if (msg.type === "incoming_call") {
+            showIncomingCall(msg.call.caller);
+          } else if (msg.type === "call_state") {
+            if (msg.call.state === "active" || msg.call.state === "ringing") {
+              showActiveCall(msg.call.caller);
+            } else if (msg.call.state === "ending") {
+              hideActiveCall();
+            }
+          } else if (msg.type === "call_ended") {
             hideActiveCall();
+          } else if (msg.type === "sip_status") {
+            const dot = document.getElementById("sipStatusDot");
+            const text = document.getElementById("sipStatusText");
+            if (msg.registered) {
+              dot.className = "inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse";
+              text.className = "text-xs uppercase tracking-wider text-emerald-400 font-semibold";
+              text.innerText = "JioFiber Voice (Online)";
+            } else {
+              dot.className = "inline-block w-2.5 h-2.5 rounded-full bg-rose-500";
+              text.className = "text-xs uppercase tracking-wider text-rose-400 font-semibold";
+              text.innerText = "SIP Connecting...";
+            }
           }
-        } else if (msg.type === "call_ended") {
-          hideActiveCall();
+        } catch (e) {
+          console.error("Failed parsing message:", e);
         }
       };
+
       ws.onclose = () => setTimeout(connectWS, 2000);
     }
 
@@ -160,17 +346,22 @@
       el.value = el.value.slice(0, -1);
     }
 
-    function startCall() {
+    async function startCall() {
       const num = document.getElementById('dialInput').value;
       if (!num) return;
+
+      await initAudioEngine();
+
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "dial", destination: num }));
       }
       showActiveCall(num);
     }
 
-    function answerCall() {
+    async function answerCall() {
       document.getElementById('incomingCallModal').classList.add('hidden');
+      await initAudioEngine();
+
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "answer" }));
       }
@@ -189,6 +380,18 @@
         ws.send(JSON.stringify({ type: "hangup" }));
       }
       hideActiveCall();
+    }
+
+    function toggleMute() {
+      isMuted = !isMuted;
+      const btn = document.getElementById('muteBtn');
+      if (isMuted) {
+        btn.classList.add('bg-rose-600/40', 'text-rose-400');
+        btn.classList.remove('bg-slate-800', 'text-slate-300');
+      } else {
+        btn.classList.remove('bg-rose-600/40', 'text-rose-400');
+        btn.classList.add('bg-slate-800', 'text-slate-300');
+      }
     }
 
     function showIncomingCall(caller) {
@@ -214,17 +417,10 @@
 
     function hideActiveCall() {
       clearInterval(timerInterval);
+      stopAudioEngine();
       document.getElementById('activeCallScreen').classList.add('hidden');
       document.getElementById('incomingCallModal').classList.add('hidden');
       document.getElementById('dialerScreen').classList.remove('hidden');
-    }
-
-    function testIncoming() {
-      fetch("http://localhost:8088/api/call/incoming", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ caller: "+91 98451 31764" })
-      });
     }
 
     connectWS();
