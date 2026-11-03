@@ -2,23 +2,26 @@
   "name": "jiofiber-calling-gateway",
   "version": "1.0.0",
   "description": "Local home calling gateway for JioFiber landline, desktop PC, and Amazon Echo Dot",
-  "main": "dist/index.js",
+  "main": "dist/electron.js",
   "scripts": {
     "build": "tsc",
     "start": "ts-node src/index.ts",
+    "desktop": "tsc && electron dist/electron.js",
+    "electron": "electron dist/electron.js",
     "dev": "nodemon --watch src --exec ts-node src/index.ts"
   },
   "dependencies": {
-    "ws": "^8.18.0",
+    "cors": "^2.8.5",
     "express": "^4.21.2",
-    "cors": "^2.8.5"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
     "@types/node": "^22.13.0",
     "@types/ws": "^8.5.14",
-    "@types/express": "^5.0.0",
-    "@types/cors": "^2.8.17",
-    "typescript": "^5.7.3",
-    "ts-node": "^10.9.2"
+    "electron": "^45.2.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
   }
 }
