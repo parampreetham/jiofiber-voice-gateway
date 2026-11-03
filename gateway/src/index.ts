@@ -383,7 +383,19 @@ class JioVoiceGateway {
       if (intentName === "DialIntent") {
         const destSlot = req.body?.request?.intent?.slots?.PhoneNumber?.value;
         if (destSlot) {
-          this.sipClient.dial(destSlot);
+          const session = this.sipClient.dial(destSlot);
+          this.activeCall = {
+            callId: session.callId,
+            caller: destSlot,
+            direction: "outgoing",
+            state: "connecting",
+            startTime: Date.now(),
+          };
+          this.broadcast({
+            type: "call_state",
+            call: this.activeCall,
+          });
+
           return res.json({
             version: "1.0",
             response: {
