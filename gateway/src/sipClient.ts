@@ -459,23 +459,25 @@ export class JioSipClient extends EventEmitter {
     if (cMatch) this.activeSession.remoteRtpIp = cMatch[1];
     if (mMatch) this.activeSession.remoteRtpPort = parseInt(mMatch[1], 10);
 
-    let selectedPt = 0; // Default PCMU
+    let selectedPt = 8; // Default PCMA (India PSTN standard)
     if (mMatch && mMatch[2]) {
       const pts = mMatch[2].trim().split(/\s+/).map(Number);
-      if (pts.includes(0)) selectedPt = 0; // PCMU
-      else if (pts.includes(8)) selectedPt = 8; // PCMA
+      if (pts.includes(8)) selectedPt = 8; // PCMA
+      else if (pts.includes(0)) selectedPt = 0; // PCMU
       else selectedPt = pts[0];
     }
+    const codecName = selectedPt === 8 ? "PCMA" : selectedPt === 0 ? "PCMU" : `PT${selectedPt}`;
 
     if (this.activeSession.remoteRtpIp && this.activeSession.remoteRtpPort) {
       console.log(
-        `[SIP] Remote RTP endpoint established: [${this.activeSession.remoteRtpIp}]:${this.activeSession.remoteRtpPort} (Codec PT: ${selectedPt})`
+        `[SIP] Remote RTP endpoint established: [${this.activeSession.remoteRtpIp}]:${this.activeSession.remoteRtpPort} (Codec: ${codecName}, PT: ${selectedPt})`
       );
       this.rtpEngine.startSession(
         this.activeSession.remoteRtpIp,
         this.activeSession.remoteRtpPort,
         selectedPt
       );
+      this.emit("codec_negotiated", { payloadType: selectedPt, codec: codecName });
     }
   }
 
@@ -590,13 +592,9 @@ export class JioSipClient extends EventEmitter {
       "s=-",
       `c=IN ${ipProto} ${localIp}`,
       "t=0 0",
-      `m=audio ${this.rtpPort} RTP/AVP 0 8 102 104 101`,
-      "a=rtpmap:0 PCMU/8000",
+      `m=audio ${this.rtpPort} RTP/AVP 8 0 101`,
       "a=rtpmap:8 PCMA/8000",
-      "a=rtpmap:102 AMR/8000",
-      "a=fmtp:102 mode-change-capability=2;max-red=0",
-      "a=rtpmap:104 AMR-WB/16000",
-      "a=fmtp:104 mode-change-capability=2;max-red=0",
+      "a=rtpmap:0 PCMU/8000",
       "a=rtpmap:101 telephone-event/8000",
       "a=fmtp:101 0-15",
       "a=ptime:20",
@@ -673,13 +671,9 @@ export class JioSipClient extends EventEmitter {
       "s=-",
       `c=IN ${ipProto} ${localIp}`,
       "t=0 0",
-      `m=audio ${this.rtpPort} RTP/AVP 0 8 102 104 101`,
-      "a=rtpmap:0 PCMU/8000",
+      `m=audio ${this.rtpPort} RTP/AVP 8 0 101`,
       "a=rtpmap:8 PCMA/8000",
-      "a=rtpmap:102 AMR/8000",
-      "a=fmtp:102 mode-change-capability=2;max-red=0",
-      "a=rtpmap:104 AMR-WB/16000",
-      "a=fmtp:104 mode-change-capability=2;max-red=0",
+      "a=rtpmap:0 PCMU/8000",
       "a=rtpmap:101 telephone-event/8000",
       "a=fmtp:101 0-15",
       "a=ptime:20",

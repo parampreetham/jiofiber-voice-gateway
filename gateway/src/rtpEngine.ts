@@ -125,8 +125,9 @@ export class RtpEngine extends EventEmitter {
     const version = (msg[0] >> 6) & 0x03;
     if (version !== 2) return; // Must be RTP v2
 
-    const cc = msg[0] & 0x0f;
+    const hasPadding = (msg[0] & 0x20) !== 0;
     const hasExtension = (msg[0] & 0x10) !== 0;
+    const cc = msg[0] & 0x0f;
     const payloadType = msg[1] & 0x7f;
 
     let payloadOffset = 12 + cc * 4;
@@ -138,10 +139,20 @@ export class RtpEngine extends EventEmitter {
 
     if (payloadOffset >= msg.length) return;
 
-    const payload = msg.subarray(payloadOffset);
+    let payloadEnd = msg.length;
+    if (hasPadding) {
+      const paddingCount = msg[msg.length - 1];
+      if (paddingCount <= msg.length - payloadOffset) {
+        payloadEnd -= paddingCount;
+      }
+    }
+
+    const payload = msg.subarray(payloadOffset, payloadEnd);
     this.packetsReceived++;
     if (this.packetsReceived === 1 || this.packetsReceived % 100 === 0) {
-      console.log(`[RTP] 🔊 Received ${this.packetsReceived} audio packets from Jio IMS (${payload.length} bytes each)`);
+      console.log(
+        `[RTP] 🔊 Received ${this.packetsReceived} audio packets from Jio IMS (PT=${payloadType}, ${payload.length} bytes)`
+      );
     }
 
     // Emit received audio payload

@@ -145,28 +145,37 @@
     let secondsElapsed = 0;
     let isMuted = false;
 
-    // Web Audio Engine
+    // Web Audio Engine & State
     let audioCtx = null;
     let micStream = null;
-    let scriptNode = null;
-    let nextPlayTime = 0;
+    let micNode = null;
+    let playerNode = null;
+    let dummySource = null;
 
-    // G.711 u-law encode table & logic
-    const BIAS = 0x84;
-    const CLIP = 32635;
+    let activeCodec = "PCMA";
+    let activePayloadType = 8; // Default PCMA for Indian landlines
 
-    function encodeUlawSample(pcm) {
-      let sign = (pcm >> 8) & 0x80;
-      if (sign !== 0) pcm = -pcm;
-      if (pcm > CLIP) pcm = CLIP;
-      pcm += BIAS;
-      let exponent = 7;
-      for (let expMask = 0x4000; (pcm & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1) {}
-      let mantissa = (pcm >> (exponent + 3)) & 0x0f;
-      return ~(sign | (exponent << 4) | mantissa) & 0xff;
+    // Circular Jitter Playback Ring Buffer
+    const RING_SIZE = 16384; // ~2 seconds at 8kHz
+    const rxRing = new Float32Array(RING_SIZE);
+    let rxWritePtr = 0;
+    let rxReadPtr = 0;
+    let rxBufferedCount = 0;
+    let isPlaybackPrimed = false;
+    const PREBUFFER_SAMPLES = 480; // 60ms pre-buffer to absorb jitter
+
+    // G.711 A-law (PT 8) Decode Lookup Table
+    const ALAW_TABLE = new Int16Array(256);
+    for (let i = 0; i < 256; i++) {
+      let a = i ^ 0x55;
+      let sign = a & 0x80;
+      let exponent = (a >> 4) & 0x07;
+      let mantissa = a & 0x0f;
+      let sample = (exponent === 0) ? (mantissa << 4) + 8 : ((mantissa << 4) + 0x108) << (exponent - 1);
+      ALAW_TABLE[i] = sign !== 0 ? sample : -sample;
     }
 
-    // G.711 u-law decode lookup table
+    // G.711 u-law (PT 0) Decode Lookup Table
     const ULAW_TABLE = new Int16Array(256);
     for (let i = 0; i < 256; i++) {
       let u = ~i & 0xff;
@@ -178,12 +187,29 @@
       ULAW_TABLE[i] = sign !== 0 ? -sample : sample;
     }
 
-    function decodeUlawToFloat32(uint8Array) {
-      const pcm = new Float32Array(uint8Array.length);
-      for (let i = 0; i < uint8Array.length; i++) {
-        pcm[i] = ULAW_TABLE[uint8Array[i]] / 32768.0;
-      }
-      return pcm;
+    // G.711 A-law Encoder (PT 8)
+    function encodeAlawSample(pcm16) {
+      let sign = (pcm16 >= 0) ? 0x80 : 0;
+      if (pcm16 < 0) pcm16 = -pcm16;
+      if (pcm16 > 32767) pcm16 = 32767;
+      let exponent = 7;
+      for (let expMask = 0x4000; (pcm16 & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1) {}
+      let mantissa = (exponent === 0) ? (pcm16 >> 4) & 0x0f : (pcm16 >> (exponent + 3)) & 0x0f;
+      return ((sign | (exponent << 4) | mantissa) ^ 0x55) & 0xff;
+    }
+
+    // G.711 u-law Encoder (PT 0)
+    const BIAS = 0x84;
+    const CLIP = 32635;
+    function encodeUlawSample(pcm) {
+      let sign = (pcm >> 8) & 0x80;
+      if (sign !== 0) pcm = -pcm;
+      if (pcm > CLIP) pcm = CLIP;
+      pcm += BIAS;
+      let exponent = 7;
+      for (let expMask = 0x4000; (pcm & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1) {}
+      let mantissa = (pcm >> (exponent + 3)) & 0x0f;
+      return ~(sign | (exponent << 4) | mantissa) & 0xff;
     }
 
     async function initAudioEngine() {
@@ -193,8 +219,53 @@
       if (audioCtx.state === 'suspended') {
         await audioCtx.resume();
       }
-      nextPlayTime = audioCtx.currentTime;
 
+      // Initialize continuous ring-buffer playback node
+      if (!playerNode) {
+        playerNode = audioCtx.createScriptProcessor(1024, 1, 1);
+        playerNode.onaudioprocess = (e) => {
+          const out = e.outputBuffer.getChannelData(0);
+          const outLen = out.length;
+          const step = 8000 / audioCtx.sampleRate;
+
+          if (!isPlaybackPrimed || rxBufferedCount < 80) {
+            out.fill(0);
+            return;
+          }
+
+          // Bound latency: if buffer grows over 200ms (1600 samples), drop excess
+          if (rxBufferedCount > 1600) {
+            const drop = rxBufferedCount - 800;
+            rxReadPtr = (rxReadPtr + drop) & (RING_SIZE - 1);
+            rxBufferedCount -= drop;
+          }
+
+          for (let i = 0; i < outLen; i++) {
+            if (rxBufferedCount > 1) {
+              const idx0 = Math.floor(rxReadPtr) & (RING_SIZE - 1);
+              const idx1 = (idx0 + 1) & (RING_SIZE - 1);
+              const frac = rxReadPtr - Math.floor(rxReadPtr);
+              out[i] = rxRing[idx0] + frac * (rxRing[idx1] - rxRing[idx0]);
+
+              rxReadPtr += step;
+              if (rxReadPtr >= RING_SIZE) rxReadPtr -= RING_SIZE;
+              rxBufferedCount -= step;
+            } else {
+              out[i] = 0;
+              isPlaybackPrimed = false;
+            }
+          }
+        };
+
+        dummySource = audioCtx.createConstantSource();
+        dummySource.offset.value = 0;
+        dummySource.connect(playerNode);
+        playerNode.connect(audioCtx.destination);
+        dummySource.start();
+        console.log("[Audio] Continuous playback ring-buffer active at", audioCtx.sampleRate, "Hz");
+      }
+
+      // Initialize microphone capture
       if (!micStream) {
         try {
           micStream = await navigator.mediaDevices.getUserMedia({
@@ -207,17 +278,16 @@
 
           const micSource = audioCtx.createMediaStreamSource(micStream);
           const bufferSize = 2048;
-          scriptNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
+          micNode = audioCtx.createScriptProcessor(bufferSize, 1, 1);
 
           const inputSampleRate = audioCtx.sampleRate;
           const targetSampleRate = 8000;
           const resampleRatio = targetSampleRate / inputSampleRate;
           let resampleBuffer = [];
 
-          scriptNode.onaudioprocess = (e) => {
-            // Mute local loopback to avoid feedback
-            const output = e.outputBuffer.getChannelData(0);
-            output.fill(0);
+          micNode.onaudioprocess = (e) => {
+            const out = e.outputBuffer.getChannelData(0);
+            out.fill(0); // Mute mic loopback to speakers
 
             if (isMuted) return;
 
@@ -228,10 +298,11 @@
               let inIdx = Math.floor(i / resampleRatio);
               let sample = input[inIdx];
               let pcm16 = Math.max(-32768, Math.min(32767, Math.floor(sample * 32767)));
-              resampleBuffer.push(encodeUlawSample(pcm16));
+              const encoded = (activePayloadType === 0) ? encodeUlawSample(pcm16) : encodeAlawSample(pcm16);
+              resampleBuffer.push(encoded);
             }
 
-            // Send in 160-sample (20ms) chunks
+            // Send 160-sample (20ms) chunks
             while (resampleBuffer.length >= 160) {
               const chunk = new Uint8Array(resampleBuffer.splice(0, 160));
               if (ws && ws.readyState === WebSocket.OPEN) {
@@ -240,9 +311,9 @@
             }
           };
 
-          micSource.connect(scriptNode);
-          scriptNode.connect(audioCtx.destination);
-          console.log("[Audio] Microphone stream capture active at 8000 Hz PCMU");
+          micSource.connect(micNode);
+          micNode.connect(audioCtx.destination);
+          console.log("[Audio] Microphone stream capture active at 8000 Hz (" + activeCodec + ")");
         } catch (err) {
           console.warn("[Audio] Could not access microphone:", err.message);
         }
@@ -250,46 +321,57 @@
     }
 
     function stopAudioEngine() {
+      if (dummySource) {
+        try { dummySource.stop(); } catch (e) {}
+        dummySource.disconnect();
+        dummySource = null;
+      }
+      if (playerNode) {
+        playerNode.disconnect();
+        playerNode = null;
+      }
       if (micStream) {
         micStream.getTracks().forEach(t => t.stop());
         micStream = null;
       }
-      if (scriptNode) {
-        scriptNode.disconnect();
-        scriptNode = null;
+      if (micNode) {
+        micNode.disconnect();
+        micNode = null;
       }
-      if (audioCtx) {
-        audioCtx.close().catch(() => {});
-        audioCtx = null;
-      }
+      rxBufferedCount = 0;
+      rxWritePtr = 0;
+      rxReadPtr = 0;
+      isPlaybackPrimed = false;
     }
 
     function playIncomingAudio(buffer) {
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        nextPlayTime = audioCtx.currentTime;
-      }
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
+      if (!audioCtx || !playerNode) {
+        initAudioEngine();
       }
 
       const uint8 = new Uint8Array(buffer);
       if (uint8.length === 0) return;
 
-      const pcmFloat = decodeUlawToFloat32(uint8);
-      const audioBuffer = audioCtx.createBuffer(1, pcmFloat.length, 8000);
-      audioBuffer.copyToChannel(pcmFloat, 0);
-
-      const source = audioCtx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioCtx.destination);
-
-      const now = audioCtx.currentTime;
-      if (nextPlayTime < now) {
-        nextPlayTime = now + 0.04; // 40ms jitter buffer
+      let pt = activePayloadType;
+      let data = uint8;
+      // If packet has 1-byte PT prefix (161 bytes):
+      if (uint8.length === 161) {
+        pt = uint8[0];
+        data = uint8.subarray(1);
       }
-      source.start(nextPlayTime);
-      nextPlayTime += audioBuffer.duration;
+
+      const table = (pt === 0) ? ULAW_TABLE : ALAW_TABLE;
+      const len = data.length;
+
+      for (let i = 0; i < len; i++) {
+        rxRing[rxWritePtr] = table[data[i]] / 32768.0;
+        rxWritePtr = (rxWritePtr + 1) & (RING_SIZE - 1);
+      }
+      rxBufferedCount += len;
+
+      if (!isPlaybackPrimed && rxBufferedCount >= PREBUFFER_SAMPLES) {
+        isPlaybackPrimed = true;
+      }
     }
 
     function connectWS() {
@@ -330,6 +412,14 @@
               dot.className = "inline-block w-2.5 h-2.5 rounded-full bg-rose-500";
               text.className = "text-xs uppercase tracking-wider text-rose-400 font-semibold";
               text.innerText = "SIP Connecting...";
+            }
+          } else if (msg.type === "audio_codec") {
+            activeCodec = msg.codec;
+            activePayloadType = msg.payloadType;
+            console.log("[Audio] Negotiated codec:", activeCodec, "PT:", activePayloadType);
+            const audioLabel = document.getElementById("callAudioStatus");
+            if (audioLabel) {
+              audioLabel.innerText = `Audio Streaming (${activeCodec} 64kbps)`;
             }
           }
         } catch (e) {

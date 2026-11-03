@@ -116,12 +116,28 @@ class JioVoiceGateway {
     });
 
     // Forward incoming RTP audio from Jio IMS to connected softphone clients
-    this.sipClient.on("audio", ({ payload }) => {
-      for (const client of this.connectedClients) {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(payload);
+    this.sipClient.on(
+      "audio",
+      ({ payload, payloadType }: { payload: Buffer; payloadType?: number }) => {
+        // Prepend 1-byte payloadType header (8 = PCMA, 0 = PCMU) so client knows exact codec
+        const packet = Buffer.alloc(1 + payload.length);
+        packet[0] = payloadType ?? 8;
+        payload.copy(packet, 1);
+        for (const client of this.connectedClients) {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(packet);
+          }
         }
       }
+    );
+
+    this.sipClient.on("codec_negotiated", ({ codec, payloadType }) => {
+      console.log(`[Gateway] Broadcasting audio codec: ${codec} (PT ${payloadType})`);
+      this.broadcast({
+        type: "audio_codec",
+        codec,
+        payloadType,
+      });
     });
   }
 
@@ -299,7 +315,9 @@ class JioVoiceGateway {
       ws.on("message", async (data: any, isBinary: boolean) => {
         // If binary, it's microphone audio from browser softphone -> forward to Jio RTP
         if (isBinary || (Buffer.isBuffer(data) && !data.toString().startsWith("{"))) {
-          this.sipClient.sendAudio(Buffer.isBuffer(data) ? data : Buffer.from(data));
+          const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+          const audioPayload = buf.length === 161 ? buf.subarray(1) : buf;
+          this.sipClient.sendAudio(audioPayload);
           return;
         }
 
