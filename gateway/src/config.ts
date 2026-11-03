@@ -1,16 +1,40 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
+import child_process from "child_process";
 import dotenv from "dotenv";
 
 dotenv.config();
 
 export function detectDefaultGateway(): string {
+  // 1. Try Windows route table lookup (100% accurate, ignores virtual switches/hotspots)
+  try {
+    if (process.platform === "win32") {
+      const out = child_process.execSync("route print 0.0.0.0", { encoding: "utf8", timeout: 1500 });
+      const match = out.match(/0\.0\.0\.0\s+0\.0\.0\.0\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/);
+      if (match && match[1] && match[1] !== "0.0.0.0" && !match[1].startsWith("127.")) {
+        return match[1];
+      }
+    } else {
+      const out = child_process.execSync("ip route show default 2>/dev/null || route -n get default 2>/dev/null", { encoding: "utf8", timeout: 1500 });
+      const match = out.match(/default\s+(?:via\s+)?([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/i);
+      if (match && match[1]) {
+        return match[1];
+      }
+    }
+  } catch (e) {}
+
+  // 2. Fallback: scan physical non-virtual network interfaces
   try {
     const ifaces = os.networkInterfaces();
     for (const name of Object.keys(ifaces)) {
+      const lower = name.toLowerCase();
+      if (lower.includes("vethernet") || lower.includes("virtual") || lower.includes("wsl") || lower.includes("loopback") || lower.includes("direct")) {
+        continue;
+      }
       for (const iface of ifaces[name] || []) {
         if (iface.family === "IPv4" && !iface.internal) {
+          if (iface.address.startsWith("192.168.137.")) continue; // Ignore Windows hotspot subnet
           const parts = iface.address.split(".");
           if (parts.length === 4) {
             return `${parts[0]}.${parts[1]}.${parts[2]}.1`;
