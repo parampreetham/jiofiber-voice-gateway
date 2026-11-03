@@ -141,7 +141,13 @@ export class JioSipClient extends EventEmitter {
   }
 
   public connect() {
-    if (!this.username || !this.password || !this.realm) {
+    if (
+      !this.username ||
+      !this.password ||
+      !this.realm ||
+      this.username.includes("XXXXXXXXXX") ||
+      this.password.includes("your_sip_password")
+    ) {
       console.log(`[SIP] Gateway unconfigured. Waiting for credentials via Settings / Setup Wizard...`);
       return;
     }

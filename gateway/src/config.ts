@@ -70,13 +70,14 @@ function getConfigFilePath(): string {
 }
 
 export function loadConfig(): JioConfig | null {
+  const defaultHost = detectDefaultGateway();
   const filePath = getConfigFilePath();
   if (fs.existsSync(filePath)) {
     try {
       const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
-      if (data.username && data.password && data.realm) {
+      if (data.username && data.password && data.realm && !data.username.includes("XXXXXXXXXX")) {
         return {
-          host: data.host || process.env.JIO_ROUTER_HOST || "192.168.29.1",
+          host: data.host || process.env.JIO_ROUTER_HOST || defaultHost,
           port: data.port || parseInt(process.env.JIO_ROUTER_PORT || "5068", 10),
           username: data.username,
           password: data.password,
@@ -90,15 +91,25 @@ export function loadConfig(): JioConfig | null {
     }
   }
 
-  // Fallback to environment variables
-  if (process.env.JIO_LANDLINE_NUMBER && process.env.JIO_SIP_PASSWORD && process.env.JIO_IMS_REALM) {
+  // Fallback to environment variables (ignoring placeholder templates)
+  const envUser = process.env.JIO_LANDLINE_NUMBER || "";
+  const envPass = process.env.JIO_SIP_PASSWORD || "";
+  const envRealm = process.env.JIO_IMS_REALM || "";
+
+  if (
+    envUser &&
+    envPass &&
+    envRealm &&
+    !envUser.includes("XXXXXXXXXX") &&
+    !envPass.includes("your_sip_password")
+  ) {
     return {
-      host: process.env.JIO_ROUTER_HOST || "192.168.29.1",
+      host: process.env.JIO_ROUTER_HOST || defaultHost,
       port: parseInt(process.env.JIO_ROUTER_PORT || "5068", 10),
-      username: process.env.JIO_LANDLINE_NUMBER,
-      password: process.env.JIO_SIP_PASSWORD,
-      realm: process.env.JIO_IMS_REALM,
-      publicId: process.env.JIO_LANDLINE_NUMBER,
+      username: envUser,
+      password: envPass,
+      realm: envRealm,
+      publicId: envUser,
       uuid: process.env.JIO_CLIENT_UUID || "00000000-0000-1000-8000-000085EA2C9F",
     };
   }
@@ -113,5 +124,7 @@ export function saveConfig(config: JioConfig): void {
 }
 
 export function isConfigured(config: JioConfig | null): boolean {
-  return !!(config && config.username && config.password && config.realm);
+  if (!config || !config.username || !config.password || !config.realm) return false;
+  if (config.username.includes("XXXXXXXXXX") || config.password.includes("your_sip_password")) return false;
+  return true;
 }
