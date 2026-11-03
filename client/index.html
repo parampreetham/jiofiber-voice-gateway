@@ -758,11 +758,22 @@
         });
         const data = await res.json();
         if (data.success) {
-          msg.className = "text-xs text-center text-emerald-400";
-          msg.innerText = data.message || "OTP sent! Please check your SMS.";
-          document.getElementById('otpVerifyBlock').classList.remove('hidden');
-          btn.innerText = "Resend SMS OTP";
-          btn.disabled = false;
+          if (data.autoConfigured) {
+            msg.className = "text-xs text-center text-emerald-400 font-semibold";
+            msg.innerText = data.message || "Device paired successfully! Connecting softphone...";
+            btn.innerText = "Connected & Paired!";
+            setTimeout(() => {
+              closeSettings();
+              btn.disabled = false;
+              btn.innerText = "Request SMS OTP from Router";
+            }, 1200);
+          } else {
+            msg.className = "text-xs text-center text-emerald-400";
+            msg.innerText = data.message || "OTP sent! Please check your SMS.";
+            document.getElementById('otpVerifyBlock').classList.remove('hidden');
+            btn.innerText = "Resend SMS OTP";
+            btn.disabled = false;
+          }
         } else {
           msg.className = "text-xs text-center text-rose-400";
           msg.innerText = data.error || "Failed contacting router. Check IP address.";

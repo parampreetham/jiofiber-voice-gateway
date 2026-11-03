@@ -14,12 +14,18 @@ export class JioProvisioningService {
 
   public requestOtp(
     routerIp: string,
+    customMac?: string,
     clientName = "JioFiberVoice"
-  ): Promise<{ success: boolean; session: ProvisioningSession; message?: string }> {
+  ): Promise<{
+    success: boolean;
+    session?: ProvisioningSession;
+    autoConfigured?: boolean;
+    config?: JioConfig;
+    message?: string;
+  }> {
     return new Promise((resolve) => {
-      // Deterministic or random MAC address
-      const randomBytes = crypto.randomBytes(4).toString("hex").match(/../g)?.join(":") || "85:ea:2c:9f";
-      const mac = `00:00:${randomBytes}`;
+      // Use persistent paired MAC (00:00:85:ea:2c:9f) by default so already-whitelisted devices connect immediately
+      const mac = (customMac && customMac.trim()) || "00:00:85:ea:2c:9f";
       const uuid = `00000000-0000-1000-8000-${mac.replace(/:/g, "").toUpperCase()}`;
 
       const url = `https://${routerIp}:8443/?terminal_sw_version=RCSAndrd&terminal_vendor=${clientName}&terminal_model=${clientName}&mac_address=${mac}&alias=${clientName}&nwk_intf=wifi&op_type=add`;
@@ -32,21 +38,46 @@ export class JioProvisioningService {
         let body = "";
         res.on("data", (chunk) => (body += chunk));
         res.on("end", () => {
-          console.log(`[Provisioning] Router OTP response (status ${res.statusCode}, x-amn: ${maskedMobile}):`, body.substring(0, 200));
+          console.log(`[Provisioning] Router response (status ${res.statusCode}, x-amn: ${maskedMobile}):`, body.substring(0, 200));
+
+          // Check if router directly returned XML configuration (already paired device!)
+          if (body.includes("<wap-provisioningdoc")) {
+            try {
+              const config = this.parseProvisioningXml(body, { routerIp, macAddress: mac, uuid });
+              if (config) {
+                console.log("[Provisioning] Router returned active SIP credentials directly!");
+                resolve({
+                  success: true,
+                  autoConfigured: true,
+                  config,
+                  message: `Device verified by JioFiber router! Automatically configured for line ${config.username}.`,
+                });
+                return;
+              }
+            } catch (e: any) {
+              console.warn("[Provisioning] Failed parsing returned XML:", e.message);
+            }
+          }
+
           if (res.statusCode === 200 || body.toLowerCase().includes("otp")) {
             const message = maskedMobile
               ? `OTP sent to your registered mobile number (${maskedMobile})`
               : "OTP sent to your registered Jio mobile number";
             resolve({
               success: true,
+              autoConfigured: false,
               session: { routerIp, macAddress: mac, cookie, uuid },
               message,
             });
           } else {
+            let errorMsg = `Router returned status ${res.statusCode}: ${body || "Forbidden"}`;
+            if (res.statusCode === 403) {
+              errorMsg = "Router returned 403 Forbidden: JioFiber limit of 6 paired extensions reached or unauthorized MAC.";
+            }
             resolve({
               success: false,
               session: { routerIp, macAddress: mac, cookie, uuid },
-              message: `Router returned status ${res.statusCode}: ${body}`,
+              message: errorMsg,
             });
           }
         });
@@ -107,15 +138,22 @@ export class JioProvisioningService {
       return match ? match[1] : "";
     };
 
-    const password = getParm("AuthPassword") || getParm("UserPwd");
-    const username = getParm("UserName") || getParm("AuthName");
-    const realm = getParm("Realm") || "ka.wln.ims.jio.com";
-    const publicId = getParm("Public_User_Identity") || username;
+    const password = getParm("userpwd") || getParm("authpassword");
+    let username = getParm("username") || getParm("authname");
+    const realm = getParm("realm") || getParm("home_network_domain_name") || "ka.wln.ims.jio.com";
+    const publicId = getParm("public_user_identity") || username;
     const routerHost = session.routerIp;
+    const uuid = getParm("uuid_value") || session.uuid || "00000000-0000-1000-8000-000085EA2C9F";
 
     if (!password || !username) {
       console.warn("[Provisioning] Missing password or username in XML:", xml.substring(0, 300));
       return null;
+    }
+
+    // Clean username
+    username = username.replace(/^sip:/i, "");
+    if (!username.includes("@") && realm) {
+      username = `${username}@${realm}`;
     }
 
     return {
@@ -125,7 +163,7 @@ export class JioProvisioningService {
       password: password,
       realm: realm,
       publicId: publicId,
-      uuid: session.uuid || "00000000-0000-1000-8000-000085EA2C9F",
+      uuid: uuid,
     };
   }
 }

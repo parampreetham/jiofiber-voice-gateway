@@ -213,14 +213,39 @@ class JioVoiceGateway {
 
     // Request OTP from Jio router for automatic setup
     this.app.post("/api/provision/otp/request", async (req, res) => {
-      const { routerIp } = req.body;
-      const targetHost = routerIp || this.currentConfig?.host || "192.168.29.1";
-      console.log(`[Provisioning] Requesting OTP pairing from router at ${targetHost}...`);
+      const { routerIp, macAddress } = req.body;
+      const targetHost = routerIp || this.currentConfig?.host || "192.168.31.1";
+      console.log(`[Provisioning] Requesting pairing/provisioning from router at ${targetHost}...`);
 
-      const result = await this.provisioningService.requestOtp(targetHost);
+      const result = await this.provisioningService.requestOtp(targetHost, macAddress);
       if (result.success) {
-        this.pendingOtpSession = result.session;
-        res.json({ success: true, message: result.message });
+        if (result.autoConfigured && result.config) {
+          saveConfig(result.config);
+          this.currentConfig = result.config;
+          this.landlineNumber = result.config.username;
+          this.sipClient.updateConfig(result.config);
+
+          this.broadcast({
+            type: "config_updated",
+            configured: true,
+            landline: this.landlineNumber,
+          });
+
+          res.json({
+            success: true,
+            autoConfigured: true,
+            config: result.config,
+            message: result.message,
+          });
+          return;
+        }
+
+        this.pendingOtpSession = result.session || null;
+        res.json({
+          success: true,
+          autoConfigured: false,
+          message: result.message,
+        });
       } else {
         res.status(400).json({ success: false, error: result.message });
       }
