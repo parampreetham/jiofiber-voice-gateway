@@ -207,6 +207,10 @@ export class JioSipClient extends EventEmitter {
 
     // Process complete SIP messages separated by double CRLF or content length
     while (this.rxBuffer.length > 0) {
+      // Strip any leading CRLF keepalives
+      this.rxBuffer = this.rxBuffer.replace(/^(\r\n)+/, "");
+      if (this.rxBuffer.length === 0) break;
+
       const headerEnd = this.rxBuffer.indexOf("\r\n\r\n");
       if (headerEnd === -1) break;
 
@@ -252,21 +256,27 @@ export class JioSipClient extends EventEmitter {
     }
 
     // 2. Incoming INVITE (Incoming Landline Call)
-    if (startLine.startsWith("INVITE")) {
+    if (startLine.startsWith("INVITE") || msg.startsWith("INVITE") || msg.includes("INVITE sip:")) {
       console.log(`[SIP] 📞 INCOMING CALL INVITE RECEIVED!`);
       this.handleIncomingInvite(msg);
       return;
     }
 
-    // 3. Outgoing Call Responses (INVITE responses)
+    // 3. Responses to CANCEL
+    if (msg.includes("CSeq:") && msg.includes("CANCEL")) {
+      console.log(`[SIP] Router responded to CANCEL: ${startLine}`);
+      return;
+    }
+
+    // 4. Outgoing Call Responses (INVITE responses)
     if (msg.includes("CSeq:") && msg.includes("INVITE")) {
       this.handleInviteResponse(startLine, msg);
       return;
     }
 
-    // 4. Inbound BYE (Remote hung up)
-    if (startLine.startsWith("BYE")) {
-      console.log(`[SIP] BYE received from remote.`);
+    // 5. Inbound BYE (Remote hung up)
+    if (startLine.startsWith("BYE") || msg.startsWith("BYE") || msg.includes("BYE sip:")) {
+      console.log(`[SIP] BYE received from remote: ${startLine}`);
       this.sendResponse("200 OK", msg);
       this.rtpEngine.stopSession();
       if (this.activeSession) {
@@ -277,9 +287,9 @@ export class JioSipClient extends EventEmitter {
       return;
     }
 
-    // 5. Inbound CANCEL
-    if (startLine.startsWith("CANCEL")) {
-      console.log(`[SIP] CANCEL received from remote.`);
+    // 6. Inbound CANCEL
+    if (startLine.startsWith("CANCEL") || msg.startsWith("CANCEL") || msg.includes("CANCEL sip:")) {
+      console.log(`[SIP] CANCEL received from remote: ${startLine}`);
       this.sendResponse("200 OK", msg);
       this.rtpEngine.stopSession();
       if (this.activeSession) {
@@ -290,8 +300,8 @@ export class JioSipClient extends EventEmitter {
       return;
     }
 
-    // 6. Inbound ACK
-    if (startLine.startsWith("ACK")) {
+    // 7. Inbound ACK
+    if (startLine.startsWith("ACK") || msg.startsWith("ACK") || msg.includes("ACK sip:")) {
       if (this.activeSession && this.activeSession.state === "ringing") {
         this.activeSession.state = "active";
         this.emit("call_connected", this.activeSession);
@@ -301,15 +311,21 @@ export class JioSipClient extends EventEmitter {
   }
 
   private handleInviteResponse(startLine: string, msg: string) {
-    if (!this.activeSession) return;
+    if (!this.activeSession) {
+      console.log(`[SIP] Response received but no active session: ${startLine}`);
+      return;
+    }
+
+    const statusCodeMatch = startLine.match(/SIP\/2\.0\s+(\d+)/);
+    const statusCode = statusCodeMatch ? parseInt(statusCodeMatch[1], 10) : 0;
 
     // 100 Trying
-    if (startLine.includes("100 Trying")) {
+    if (statusCode === 100) {
       console.log(`[SIP] Remote router returned 100 Trying.`);
     }
 
     // 180 Ringing or 183 Session Progress
-    else if (startLine.includes("180 Ringing") || startLine.includes("183 Session Progress")) {
+    else if (statusCode === 180 || statusCode === 183) {
       console.log(`[SIP] 🔔 Remote party is RINGING (${startLine})!`);
       this.activeSession.state = "ringing";
       
@@ -319,11 +335,18 @@ export class JioSipClient extends EventEmitter {
       // Parse remote SDP if early media present
       this.parseRemoteSdp(msg);
 
+      // Check if remote requires PRACK (RFC 3262)
+      const rseqMatch = msg.match(/RSeq:\s*(\d+)/i);
+      if (rseqMatch && msg.includes("Require:") && msg.includes("100rel")) {
+        const rseq = parseInt(rseqMatch[1], 10);
+        this.sendPrack(rseq, msg);
+      }
+
       this.emit("call_ringing", this.activeSession);
     }
 
     // 200 OK (Call Answered)
-    else if (startLine.includes("200 OK")) {
+    else if (statusCode === 200) {
       console.log(`[SIP] 🎉 Call ANSWERED by remote party!`);
       this.activeSession.state = "active";
 
@@ -339,9 +362,9 @@ export class JioSipClient extends EventEmitter {
     }
 
     // 407 / 401 Auth Challenge for Outgoing Call
-    else if (startLine.includes("407 Proxy Authentication Required") || startLine.includes("401 Unauthorized")) {
-      console.log(`[SIP] INVITE challenge received. Calculating response...`);
-      const is407 = startLine.includes("407");
+    else if (statusCode === 401 || statusCode === 407) {
+      console.log(`[SIP] INVITE challenge received (${statusCode}). Calculating response...`);
+      const is407 = statusCode === 407;
       const authHeaderName = is407 ? "Proxy-Authenticate" : "WWW-Authenticate";
       const nonceMatch =
         msg.match(new RegExp(`${authHeaderName}:.*nonce="([^"]+)"`, "i")) ||
@@ -371,20 +394,47 @@ export class JioSipClient extends EventEmitter {
       }
     }
 
-    // Call Rejected / Busy / Failed
-    else if (
-      startLine.includes("486 Busy Here") ||
-      startLine.includes("603 Decline") ||
-      startLine.includes("404 Not Found") ||
-      startLine.includes("487 Request Terminated")
-    ) {
-      console.log(`[SIP] Call ended/rejected: ${startLine}`);
+    // Any other 4xx, 5xx, 6xx (Busy, Declined, Cancelled, Terminated, Unavailable)
+    else if (statusCode >= 400 && statusCode < 700) {
+      console.log(`[SIP] Call ended/rejected by remote (Status ${statusCode}): ${startLine}`);
       this.sendAck();
       this.rtpEngine.stopSession();
       this.activeSession.state = "ended";
       this.emit("call_ended", this.activeSession);
       this.activeSession = null;
     }
+  }
+
+  private sendPrack(rseq: number, respMsg: string) {
+    if (!this.socket || !this.activeSession) return;
+    const localIp = this.socket.localAddress;
+    const localPort = this.socket.localPort;
+    const fmtIp = this.formatIp(localIp);
+
+    const contactMatch = respMsg.match(/Contact:\s*<([^>]+)>/i);
+    const reqUri = contactMatch ? contactMatch[1] : this.activeSession.targetUri;
+
+    const prackCSeq = ++this.activeSession.cseq;
+    const branch = "z9hG4bK" + crypto.randomBytes(8).toString("hex");
+    const toTagPart = this.activeSession.toTag ? `;tag=${this.activeSession.toTag}` : "";
+
+    const prack = [
+      `PRACK ${reqUri} SIP/2.0`,
+      `Via: SIP/2.0/TLS ${fmtIp}:${localPort};branch=${branch};rport`,
+      `From: <sip:${this.publicId}@${this.realm}>;tag=${this.activeSession.fromTag}`,
+      `To: <${this.activeSession.targetUri}>${toTagPart}`,
+      `Call-ID: ${this.activeSession.callId}`,
+      `CSeq: ${prackCSeq} PRACK`,
+      `RAck: ${rseq} 1 INVITE`,
+      `Max-Forwards: 70`,
+      `User-Agent: JSEAndrd-1.0`,
+      `Content-Length: 0`,
+      "",
+      "",
+    ].join("\r\n");
+
+    console.log(`[SIP] Sending PRACK for RSeq ${rseq}...`);
+    this.socket.write(prack);
   }
 
   public sendAudio(chunk: Buffer) {
@@ -549,6 +599,7 @@ export class JioSipClient extends EventEmitter {
     const sdp = sdpLines.join("\r\n") + "\r\n";
 
     const branch = "z9hG4bK" + crypto.randomBytes(8).toString("hex");
+    this.activeSession.branch = branch;
     const headers = [
       `INVITE ${this.activeSession.targetUri} SIP/2.0`,
       `Via: SIP/2.0/TLS ${fmtIp}:${localPort};branch=${branch};rport`,
@@ -662,16 +713,20 @@ export class JioSipClient extends EventEmitter {
     const fmtIp = this.formatIp(localIp);
     const toTagPart = this.activeSession.toTag ? `;tag=${this.activeSession.toTag}` : "";
 
-    if (this.activeSession.direction === "outgoing" && this.activeSession.state === "trying") {
+    if (
+      this.activeSession.direction === "outgoing" &&
+      (this.activeSession.state === "trying" || this.activeSession.state === "ringing")
+    ) {
       // Send CANCEL
-      const branch = "z9hG4bK" + crypto.randomBytes(8).toString("hex");
+      // RFC 3261: Via branch MUST match the INVITE request's branch!
+      // CANCEL MUST NOT contain a To tag!
       const cancel = [
         `CANCEL ${this.activeSession.targetUri} SIP/2.0`,
-        `Via: SIP/2.0/TLS ${fmtIp}:${localPort};branch=${branch};rport`,
+        `Via: SIP/2.0/TLS ${fmtIp}:${localPort};branch=${this.activeSession.branch};rport`,
         `From: <sip:${this.publicId}@${this.realm}>;tag=${this.activeSession.fromTag}`,
         `To: <${this.activeSession.targetUri}>`,
         `Call-ID: ${this.activeSession.callId}`,
-        `CSeq: ${this.activeSession.cseq} CANCEL`,
+        `CSeq: 1 CANCEL`,
         `Max-Forwards: 70`,
         `User-Agent: JSEAndrd-1.0`,
         `Content-Length: 0`,
@@ -680,7 +735,7 @@ export class JioSipClient extends EventEmitter {
       ].join("\r\n");
 
       this.socket.write(cancel);
-      console.log(`[SIP] Sent CANCEL for call ${this.activeSession.callId}`);
+      console.log(`[SIP] Sent CANCEL (branch: ${this.activeSession.branch}) for call ${this.activeSession.callId}`);
     } else {
       // Send BYE
       const branch = "z9hG4bK" + crypto.randomBytes(8).toString("hex");

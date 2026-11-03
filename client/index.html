@@ -311,7 +311,7 @@
           } else if (msg.type === "call_state") {
             if (msg.call.state === "active" || msg.call.state === "ringing") {
               showActiveCall(msg.call.caller);
-            } else if (msg.call.state === "ending") {
+            } else if (msg.call.state === "ending" || msg.call.state === "ended" || msg.call.state === "failed") {
               hideActiveCall();
             }
           } else if (msg.type === "call_ended") {

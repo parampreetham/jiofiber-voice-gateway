@@ -99,7 +99,7 @@ class JioVoiceGateway {
     });
 
     this.sipClient.on("call_ended", () => {
-      console.log(`[Gateway] Call ended`);
+      console.log(`[Gateway] Call ended event received from SIP client`);
       if (this.activeCall) {
         this.activeCall.state = "ending";
         this.broadcast({
@@ -109,7 +109,9 @@ class JioVoiceGateway {
         setTimeout(() => {
           this.activeCall = null;
           this.broadcast({ type: "call_ended" });
-        }, 300);
+        }, 100);
+      } else {
+        this.broadcast({ type: "call_ended" });
       }
     });
 
