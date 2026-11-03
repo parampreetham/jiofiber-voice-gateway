@@ -353,11 +353,11 @@ class JioVoiceGateway {
     });
 
     // Alexa Skill webhook for Amazon Echo Dot
-    this.app.post("/api/alexa", (req, res) => {
+    const handleAlexaRequest = (req: express.Request, res: express.Response) => {
       const requestType = req.body?.request?.type;
       const intentName = req.body?.request?.intent?.name;
 
-      console.log(`[Alexa] Request: ${requestType}, Intent: ${intentName}`);
+      console.log(`[Alexa] Incoming request: ${requestType}, Intent: ${intentName}`);
 
       if (requestType === "LaunchRequest") {
         return res.json({
@@ -467,6 +467,14 @@ class JioVoiceGateway {
           shouldEndSession: true,
         },
       });
+    };
+
+    this.app.post("/api/alexa", handleAlexaRequest);
+    this.app.post("/", (req, res, next) => {
+      if (req.body?.request?.type || req.body?.session?.application) {
+        return handleAlexaRequest(req, res);
+      }
+      next();
     });
   }
 
